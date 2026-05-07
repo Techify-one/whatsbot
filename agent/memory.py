@@ -277,6 +277,10 @@ class ContactMemory:
             parts.append(f"Obs: {obs}")
         return "\n".join(parts)
 
+    def get_tags_summary(self) -> str:
+        """Return comma-separated list of tag names for prompt injection."""
+        return ", ".join(self.tags) if self.tags else ""
+
 
 def _build_image_content(media_path: str, caption: str = "") -> list[dict] | str:
     """Build an OpenAI vision content array from a local image file.
