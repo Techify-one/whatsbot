@@ -213,21 +213,60 @@ def register_routes(app, deps):
 
     # ── Batch Processing ──────────────────────────────────────────
 
-    async def _process_batch(phone: str, delay: float):
-        """Wait for batch delay, then process all accumulated messages."""
-        await asyncio.sleep(delay)
+    # ── Typing-Aware Orchestrator ─────────────────────────────────
 
-        items = state.pending_messages.pop(phone, [])
-        state.batch_tasks.pop(phone, None)
+    async def _wait_typing_paused(phone: str, max_wait: float = 30.0):
+        """Block while the contact is typing/recording. Defensive timeout to avoid hangs.
 
-        if not items:
-            return
+        WhatsApp emits a single `composing` event when the user starts typing and a
+        `paused` event when they stop — there is no heartbeat in between. The stale
+        check below is a fallback for cases where `paused` never arrives (dropped
+        connection, app killed, etc.) — set generously so genuine long typing isn't cut.
+        """
+        start = time.time()
+        while True:
+            ts = state.typing_state.get(phone)
+            if not ts or not ts.get("active"):
+                return
+            # No event for 25s → assume paused (defensive)
+            if time.time() - ts.get("last_ts", 0) > 25:
+                logger.info("[Orchestrator] %s typing event stale, assuming paused", phone)
+                state.typing_state[phone] = {**ts, "active": False}
+                return
+            if time.time() - start > max_wait:
+                logger.warning("[Orchestrator] %s typing wait timeout %.1fs", phone, max_wait)
+                state.typing_state[phone] = {**ts, "active": False}
+                return
+            await asyncio.sleep(0.3)
 
-        # Create execution tracking
-        exec_id = await astart_execution(phone, "webhook")
-
+    async def _send_with_typing_guard(phone: str, reply: str):
+        """Wait for contact to stop typing, mark sending=True, then send (uncancellable phase)."""
+        await _wait_typing_paused(phone)
+        state.sending[phone] = True
         try:
-            # Record webhook payload
+            await _send_reply(phone, reply)
+        finally:
+            state.sending[phone] = False
+
+    def _schedule_orchestrator(phone: str):
+        """Cancel existing orchestrator (unless mid-send) and spawn a new one."""
+        existing = state.processing_tasks.get(phone)
+        if existing and not existing.done():
+            if state.sending.get(phone):
+                # Mid-send — don't cancel. The current orchestrator will spawn the next
+                # cycle automatically when it finishes sending (sees pending_messages).
+                return
+            existing.cancel()
+        state.processing_tasks[phone] = asyncio.create_task(_orchestrate(phone))
+
+    async def _run_one_cycle(phone: str, items: list[dict]):
+        """One processing cycle: text batch (single LLM call) + each media item separately.
+
+        Cancellable via task.cancel() up until the SEND phase, which is guarded by
+        state.sending[phone]=True so the webhook does not interrupt mid-send.
+        """
+        exec_id = await astart_execution(phone, "webhook")
+        try:
             await atrack_step("webhook_received", {
                 "phone": phone,
                 "items": [
@@ -238,7 +277,6 @@ def register_routes(app, deps):
 
             contact = agent_handler._get_contact(phone)
 
-            # Separate plain text items from media items
             text_parts: list[str] = []
             text_msg_ids: list[str] = []
             media_items: list[dict] = []
@@ -256,8 +294,6 @@ def register_routes(app, deps):
                 "combined_preview": "\n".join(t for t in text_parts if t)[:200],
             })
 
-            # AI is active — mark user messages as read before processing
-            # (preserves unread_ai_count so operator sees AI replied)
             if contact.ai_enabled and settings.get("auto_reply", True):
                 msg_ids = await asyncio.to_thread(contact.mark_user_messages_as_read)
                 if msg_ids:
@@ -268,7 +304,7 @@ def register_routes(app, deps):
                             pass
                     await ws_manager.broadcast("messages_read", {"phone": phone, "only_user": True})
 
-            # Process combined text messages first
+            # ── Text batch ──────────────────────────────────
             if text_parts:
                 combined = "\n".join(t for t in text_parts if t)
                 if combined:
@@ -287,8 +323,9 @@ def register_routes(app, deps):
                         else:
                             try:
                                 await asyncio.to_thread(gowa_client.send_chat_presence, phone)
-                                result = await asyncio.to_thread(
-                                    agent_handler.process_message, phone, combined,
+                                # Cancellable LLM call
+                                result = await agent_handler.aprocess_message(
+                                    phone, combined,
                                     save_user_message=False, save_response=False)
                                 if result.tool_calls:
                                     await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
@@ -300,12 +337,14 @@ def register_routes(app, deps):
                                             "message": {"role": "system_notice", "content": result.reply, "ts": time.time()},
                                         })
                                     else:
-                                        await _send_reply(phone, result.reply)
+                                        await _send_with_typing_guard(phone, result.reply)
+                            except asyncio.CancelledError:
+                                raise
                             except Exception as e:
                                 logger.error("[Batch] Agent error for %s: %s", phone, e)
                                 await atrack_step("error", {"error": str(e), "phase": "text_processing"}, status="error")
 
-            # Process each media item individually
+            # ── Media items (each handled individually) ─────
             for item in media_items:
                 text = item.get("text", "")
                 image_path = item.get("image_path")
@@ -314,7 +353,6 @@ def register_routes(app, deps):
                 media_label = "image" if image_path else "audio"
                 logger.info("[Batch] Processing %s from %s", media_label, phone)
 
-                # Save message to contact memory
                 contact.add_message(
                     "user", text or ("[Áudio recebido]" if audio_path else ""),
                     media_type="image" if image_path else "audio",
@@ -322,7 +360,6 @@ def register_routes(app, deps):
                     msg_id=item.get("msg_id"),
                 )
 
-                # Transcribe audio / describe image
                 transcription = ""
                 try:
                     if audio_path and settings.get("audio_transcription_enabled", True):
@@ -334,12 +371,8 @@ def register_routes(app, deps):
                 except Exception as e:
                     logger.error("[Batch] Transcription error for %s: %s", phone, e)
 
-                # Save transcription as private message and broadcast.
-                # Also update the original user message so the LLM sees the
-                # transcription instead of the placeholder "[Áudio recebido]".
                 if transcription:
                     contact.add_message("transcription", transcription)
-                    # Update the last user message content with the transcription
                     if audio_path:
                         new_content = f"[Transcrição do áudio]: {transcription}"
                     elif image_path:
@@ -372,7 +405,6 @@ def register_routes(app, deps):
                     })
                     continue
 
-                # Build text for LLM: use transcription if available
                 llm_text = text or ""
                 if audio_path:
                     if transcription:
@@ -385,8 +417,8 @@ def register_routes(app, deps):
 
                 try:
                     await asyncio.to_thread(gowa_client.send_chat_presence, phone)
-                    result = await asyncio.to_thread(
-                        agent_handler.process_message, phone,
+                    result = await agent_handler.aprocess_message(
+                        phone,
                         llm_text,
                         save_user_message=False, save_response=False,
                         image_path=image_path if not transcription else None,
@@ -401,22 +433,62 @@ def register_routes(app, deps):
                                 "message": {"role": "system_notice", "content": result.reply, "ts": time.time()},
                             })
                         else:
-                            await _send_reply(phone, result.reply)
+                            await _send_with_typing_guard(phone, result.reply)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.error("[Batch] Agent error for %s (%s): %s", phone, media_label, e)
                     await atrack_step("error", {"error": str(e), "phase": f"{media_label}_processing"}, status="error")
 
-            # Finalize execution as completed
             await aend_execution(exec_id)
+        except asyncio.CancelledError:
+            await aend_execution(exec_id, error="cancelled")
+            raise
         except Exception as exc:
             await aend_execution(exec_id, error=str(exc))
 
-        # Prune old executions if beyond limit
         max_exec = settings.get("max_executions", 200)
         try:
             await asyncio.to_thread(prune_executions, max_exec)
         except Exception:
             pass
+
+    async def _orchestrate(phone: str):
+        """Typing-aware batch orchestrator: wait → batch_delay → wait → cycle.
+
+        Phases (each cancellable except the final SEND inside _run_one_cycle):
+          1. Wait until contact stops typing (defensive 30s timeout)
+          2. Sleep for the configured batch_delay
+          3. Wait again (typing may have resumed during the sleep)
+          4. Snapshot pending and run the LLM + send cycle
+
+        Cancellation by the webhook (new message arrived) drops the current run; the
+        webhook then schedules a fresh orchestrator that picks up the new pending list.
+        """
+        try:
+            batch_delay = settings.get("message_batch_delay", 3.0)
+            await _wait_typing_paused(phone)
+            await asyncio.sleep(batch_delay)
+            await _wait_typing_paused(phone)
+
+            items = list(state.pending_messages.get(phone, []))
+            if not items:
+                return
+            # Consume now: a NEW message arriving during _run_one_cycle goes into a fresh batch
+            state.pending_messages.pop(phone, None)
+
+            await _run_one_cycle(phone, items)
+
+            # If new messages arrived during the SEND phase (when cancellation is blocked),
+            # spawn another orchestrator so they get processed.
+            if state.pending_messages.get(phone):
+                state.processing_tasks[phone] = asyncio.create_task(_orchestrate(phone))
+        except asyncio.CancelledError:
+            return
+        finally:
+            cur = asyncio.current_task()
+            if state.processing_tasks.get(phone) is cur:
+                state.processing_tasks.pop(phone, None)
 
     # ── Webhook Endpoint ──────────────────────────────────────────
 
@@ -439,10 +511,16 @@ def register_routes(app, deps):
             from_jid = data.get("from", "")
             phone = from_jid.split("@")[0] if "@" in from_jid else from_jid
             presence_state = data.get("state", "")
-            media = data.get("media", "")
+            media = data.get("media", "") or "text"
             if phone and presence_state:
                 logger.info("[Webhook] chat_presence %s from %s (media=%s)",
-                            presence_state, phone, media or "text")
+                            presence_state, phone, media)
+                # Update orchestrator-visible typing state
+                state.typing_state[phone] = {
+                    "active": presence_state == "composing",
+                    "media": media,
+                    "last_ts": time.time(),
+                }
                 await ws_manager.broadcast("chat_presence", {
                     "phone": phone,
                     "state": presence_state,
@@ -835,15 +913,10 @@ def register_routes(app, deps):
             "msg_id": msg_id,
         })
 
-        # Cancel existing batch timer for this contact
-        if phone in state.batch_tasks:
-            state.batch_tasks[phone].cancel()
-
-        # Schedule batch processing after delay
-        batch_delay = settings.get("message_batch_delay", 3.0)
-        state.batch_tasks[phone] = asyncio.create_task(
-            _process_batch(phone, batch_delay)
-        )
+        # Schedule (or restart) the typing-aware orchestrator. This cancels the current
+        # cycle if it's not in the SEND phase yet, so a newly arrived message can be
+        # bundled into the same batch (and any in-flight LLM call is aborted).
+        _schedule_orchestrator(phone)
 
         # Prune processed set to avoid unbounded growth
         if len(state.processed_messages) > 5000:

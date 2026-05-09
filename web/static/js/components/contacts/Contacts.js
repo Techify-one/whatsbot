@@ -260,11 +260,12 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
 
     if (state === 'composing') {
       setTypingState(prev => ({ ...prev, [phone]: media === 'audio' ? 'audio' : 'text' }));
-      // Auto-clear after 5s if no "paused" arrives
+      // WhatsApp emits a single `composing` event (not heartbeated). Auto-clear after
+      // 25s as a defensive fallback in case `paused` never arrives (e.g. dropped connection).
       clearTimeout(typingTimers.current[phone]);
       typingTimers.current[phone] = setTimeout(() => {
         setTypingState(prev => { const n = { ...prev }; delete n[phone]; return n; });
-      }, 5000);
+      }, 25000);
     } else {
       // paused or unknown → clear
       clearTimeout(typingTimers.current[phone]);

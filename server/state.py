@@ -86,7 +86,14 @@ class AppState:
         # Message batching — accumulate messages per contact before responding
         # Each item: {"text": str, "image_path": str|None, "audio_path": str|None}
         self.pending_messages: dict[str, list[dict]] = {}  # phone -> [msg_dict, ...]
-        self.batch_tasks: dict[str, asyncio.Task] = {}  # phone -> scheduled task
+        self.batch_tasks: dict[str, asyncio.Task] = {}  # phone -> scheduled task (legacy)
+        # Typing-aware orchestrator state
+        # typing_state[phone] = {"active": bool, "media": "text"|"audio", "last_ts": float}
+        self.typing_state: dict[str, dict] = {}
+        # Active orchestrator task per contact (replaces batch_tasks for typing-aware flow)
+        self.processing_tasks: dict[str, asyncio.Task] = {}
+        # True while a reply is mid-flight to WhatsApp — webhook must NOT cancel during this phase
+        self.sending: dict[str, bool] = {}
         # Track recently sent replies to filter GOWA webhook echo-backs
         self.recently_sent: dict[str, float] = {}  # "phone:content_hash" -> timestamp
         # Bot's own identity for @mention detection in groups

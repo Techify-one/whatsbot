@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import dataclasses
 import json
@@ -7,7 +8,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 from agent.memory import ContactMemory, TagRegistry, _build_image_content
 from agent.tools import ALL_TOOLS
@@ -50,6 +51,7 @@ class AgentHandler:
         self.default_ai_enabled = default_ai_enabled
         self._contacts: dict[str, ContactMemory] = {}
         self._client: OpenAI | None = None
+        self._async_client: AsyncOpenAI | None = None
         self.pricing_fn = pricing_fn
         self.split_messages: bool = True
         self.tag_registry = TagRegistry()
@@ -82,6 +84,14 @@ class AgentHandler:
             )
         return self._client
 
+    def _get_async_client(self) -> AsyncOpenAI:
+        if self._async_client is None or self._async_client.api_key != self.api_key:
+            self._async_client = AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=self.api_key,
+            )
+        return self._async_client
+
     def update_config(
         self,
         api_key: str | None = None,
@@ -97,6 +107,7 @@ class AgentHandler:
         if api_key is not None:
             self.api_key = api_key
             self._client = None
+            self._async_client = None
         if system_prompt is not None:
             self.system_prompt = system_prompt
         if max_context_messages is not None:
@@ -284,6 +295,148 @@ class AgentHandler:
                 "--- Fim do formato ---"
             )
         return prompt
+
+    async def aprocess_message(self, sender: str, text: str, *,
+                               save_user_message: bool = True,
+                               save_response: bool = True,
+                               image_path: str | None = None,
+                               audio_path: str | None = None) -> ProcessResult:
+        """Async cancellable equivalent of process_message.
+
+        Uses AsyncOpenAI so that cancelling the surrounding asyncio task aborts the
+        in-flight HTTP request instead of letting it complete in the background.
+        """
+        if not self.api_key:
+            return ProcessResult(reply="[WhatsBot] API key não configurada.")
+
+        contact = self._get_contact(sender)
+
+        media_type: str | None = None
+        media_path: str | None = None
+        if image_path:
+            media_type = "image"
+            media_path = image_path
+        elif audio_path:
+            media_type = "audio"
+            media_path = audio_path
+
+        if save_user_message:
+            contact.add_message("user", text or "", media_type=media_type, media_path=media_path)
+
+        context_messages = contact.get_context_messages(self.max_context_messages)
+
+        messages = [
+            {"role": "system", "content": self._build_system_prompt(contact)},
+            *context_messages,
+        ]
+
+        try:
+            client = self._get_async_client()
+            track_step("llm_request", {
+                "model": self.model,
+                "context_messages": len(messages) - 1,
+                "tools": [t["function"]["name"] for t in ALL_TOOLS],
+            })
+            response = await client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=ALL_TOOLS,
+                tool_choice="auto",
+                max_tokens=1024,
+            )
+
+            self._record_usage(sender, "text", self.model, response)
+            usage = response.usage
+            track_step("llm_response", {
+                "model": self.model,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "has_tool_calls": bool(response.choices[0].message.tool_calls),
+            })
+            msg = response.choices[0].message
+
+            executed_tools: list[dict] = []
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_name = tc.function.name
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError as e:
+                        logger.warning("Failed to parse tool args for %s: %s", sender, e)
+                        args = {}
+
+                    if tool_name == "save_contact_info":
+                        try:
+                            contact.update_info(**args)
+                        except Exception as e:
+                            logger.warning("Failed to execute %s for %s: %s", tool_name, sender, e)
+                    elif tool_name == "transfer_to_human":
+                        try:
+                            contact.set_ai_enabled(False)
+                            self.tag_registry.create("transferido_atendente", "#ef4444")
+                            contact.add_tag("transferido_atendente")
+                            contact.save()
+                            logger.info("Transfer to human for %s: %s", sender, args.get("reason", ""))
+                        except Exception as e:
+                            logger.warning("Failed to execute %s for %s: %s", tool_name, sender, e)
+
+                    executed_tools.append({"tool": tool_name, "args": args})
+                    track_step("tool_executed", {"tool": tool_name, "args": args})
+                    logger.info("Tool call for %s: %s(%s)", sender, tool_name, args)
+
+                if not msg.content:
+                    messages.append(msg.model_dump())
+                    tool_results = {
+                        "transfer_to_human": "Transferência realizada. Responda ao cliente de forma curta e natural, apenas confirmando que já vai ser atendido pela pessoa solicitada. NÃO mencione 'humano', 'atendente' nem 'transferência'.",
+                    }
+                    for tc in msg.tool_calls:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": tool_results.get(tc.function.name, "Informações salvas com sucesso."),
+                        })
+                    track_step("llm_request", {"model": self.model, "type": "followup"})
+                    follow_up = await client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        max_tokens=1024,
+                    )
+                    self._record_usage(sender, "text", self.model, follow_up)
+                    fu_usage = follow_up.usage
+                    track_step("llm_response", {
+                        "model": self.model,
+                        "type": "followup",
+                        "prompt_tokens": fu_usage.prompt_tokens if fu_usage else 0,
+                        "completion_tokens": fu_usage.completion_tokens if fu_usage else 0,
+                    })
+                    reply = follow_up.choices[0].message.content.strip()
+                else:
+                    reply = msg.content.strip()
+            else:
+                reply = msg.content.strip()
+
+            if save_response:
+                contact.add_message("assistant", reply)
+            logger.info("Processed message from %s", sender)
+
+            updated_info = None
+            if any(tc.get("tool") == "save_contact_info" for tc in executed_tools):
+                updated_info = dict(contact.info)
+                updated_info["observations"] = list(updated_info.get("observations", []))
+
+            return ProcessResult(reply=reply, tool_calls=executed_tools, contact_info=updated_info)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("LLM error for %s: %s", sender, e)
+            track_step("error", {"error": str(e), "phase": "llm_call"}, status="error")
+            error_msg = str(e)
+            if "401" in error_msg or "unauthorized" in error_msg.lower():
+                return ProcessResult(reply="[WhatsBot] API key inválida. Verifique sua chave OpenRouter.")
+            if "429" in error_msg or "rate" in error_msg.lower():
+                return ProcessResult(reply="[WhatsBot] Limite de requisições atingido. Tente novamente em instantes.")
+            return ProcessResult(reply="[WhatsBot] Erro ao processar mensagem. Tente novamente.")
 
     def process_message(self, sender: str, text: str, *,
                         save_user_message: bool = True,
