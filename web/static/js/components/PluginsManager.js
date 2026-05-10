@@ -6,6 +6,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { PluginSettingsForm } from './PluginSettingsForm.js';
+import { authHeaders, handleUnauthorized } from '../services/api.js';
 
 const html = htm.bind(h);
 
@@ -58,7 +59,8 @@ export function PluginsManager({ onPluginsChanged }) {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/plugins');
+      const r = await fetch('/api/plugins', { headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'failed');
       setPlugins(data.data.plugins || []);
@@ -94,7 +96,8 @@ export function PluginsManager({ onPluginsChanged }) {
   async function toggle(pid, enable) {
     const action = enable ? 'enable' : 'disable';
     try {
-      const r = await fetch(`/api/plugins/${pid}/${action}`, { method: 'POST' });
+      const r = await fetch(`/api/plugins/${pid}/${action}`, { method: 'POST', headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'falha');
       setRestarting(true);
@@ -106,7 +109,8 @@ export function PluginsManager({ onPluginsChanged }) {
   async function deletePlugin(pid) {
     if (!confirm(`Remover plugin '${pid}'? A pasta e as tabelas dele serão apagadas.`)) return;
     try {
-      const r = await fetch(`/api/plugins/${pid}`, { method: 'DELETE' });
+      const r = await fetch(`/api/plugins/${pid}`, { method: 'DELETE', headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'falha');
       setRestarting(true);
@@ -115,8 +119,26 @@ export function PluginsManager({ onPluginsChanged }) {
     }
   }
 
-  function exportPlugin(pid) {
-    window.location.href = `/api/plugins/${pid}/export`;
+  async function exportPlugin(pid) {
+    try {
+      const r = await fetch(`/api/plugins/${pid}/export`, { headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const cd = r.headers.get('content-disposition') || '';
+      const m = cd.match(/filename="?([^";]+)"?/i);
+      const filename = (m && m[1]) || `${pid}.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(`Erro ao exportar: ${e.message || e}`);
+    }
   }
 
   async function importPlugin(file) {
@@ -125,7 +147,8 @@ export function PluginsManager({ onPluginsChanged }) {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const r = await fetch('/api/plugins/import', { method: 'POST', body: fd });
+      const r = await fetch('/api/plugins/import', { method: 'POST', body: fd, headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'falha');
       await load();

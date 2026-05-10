@@ -165,6 +165,8 @@ CREATE INDEX IF NOT EXISTS plugin_<id>_items_created_at
 
 Componente Preact + HTM com `default export`. Usar imports do importmap (`preact`, `preact/hooks`, `htm`). Receber `apiBase` como prop.
 
+**Importante (auth):** quando o usuário configura uma senha no app, a API exige `Authorization: Bearer <token>` em **todas** as chamadas `/api/*`. O token fica em `localStorage` sob a chave `whatsbot_token`. Plugin precisa anexar esse header — senão a tela mostra `Não autenticado.` quando o app está protegido por senha. O helper abaixo cobre isso e também captura 401 pra disparar o evento de logout do core (`whatsbot:unauthorized`):
+
 ```js
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -172,12 +174,29 @@ import htm from 'htm';
 
 const html = htm.bind(h);
 
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('whatsbot_token') || '';
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
+}
+
+async function apiFetch(url, init = {}) {
+  const headers = authHeaders(init.headers || {});
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401) {
+    localStorage.removeItem('whatsbot_token');
+    window.dispatchEvent(new Event('whatsbot:unauthorized'));
+    throw new Error('Não autenticado.');
+  }
+  return res;
+}
+
 export default function MyScreen({ apiBase }) {
   const [items, setItems] = useState([]);
   useEffect(() => {
-    fetch(`${apiBase}/items`).then(r => r.json()).then(d => {
-      if (d.ok) setItems(d.data || []);
-    });
+    apiFetch(`${apiBase}/items`)
+      .then(r => r.json())
+      .then(d => { if (d.ok) setItems(d.data || []); })
+      .catch(() => { /* unauthorized já tratado */ });
   }, []);
   return html`
     <div class="p-6 max-w-3xl mx-auto">
@@ -187,6 +206,8 @@ export default function MyScreen({ apiBase }) {
   `;
 }
 ```
+
+Para `POST`/`PUT` com JSON, passe `headers: { 'Content-Type': 'application/json' }` e `body: JSON.stringify(...)` — o `apiFetch` adiciona o `Authorization` em cima desses headers. Para uploads (`FormData`), **não** defina `Content-Type` — o navegador define com boundary correto.
 
 ## Passo 4 — Instruções finais ao usuário
 

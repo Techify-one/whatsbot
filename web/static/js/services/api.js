@@ -14,6 +14,15 @@ function _authHeaders(headers = {}) {
   return headers;
 }
 
+export function authHeaders(extra = {}) {
+  return _authHeaders({ ...extra });
+}
+
+export function handleUnauthorized() {
+  localStorage.removeItem('whatsbot_token');
+  window.dispatchEvent(new Event('whatsbot:unauthorized'));
+}
+
 async function request(method, path, body) {
   const opts = {
     method,

@@ -4,6 +4,7 @@
 import { h } from 'preact';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import htm from 'htm';
+import { authHeaders, handleUnauthorized } from '../services/api.js';
 
 const html = htm.bind(h);
 
@@ -140,7 +141,8 @@ export function ToolsManager() {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/tools');
+      const r = await fetch('/api/tools', { headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'failed');
       setTools(data.data.tools || []);
@@ -170,9 +172,10 @@ export function ToolsManager() {
     try {
       const r = await fetch(`/api/tools/${encodeURIComponent(name)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'failed');
       setTools((prev) => prev.map((t) => (t.name === name ? { ...t, ...data.data } : t)));

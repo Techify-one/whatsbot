@@ -12,7 +12,7 @@ import { PluginScreen } from './components/PluginScreen.js';
 import { ToolsManager } from './components/ToolsManager.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
-import { checkAuth } from './services/api.js';
+import { checkAuth, authHeaders } from './services/api.js';
 import { playTransferAlert } from './utils/alertSound.js';
 
 const html = htm.bind(h);
@@ -199,7 +199,7 @@ function App({ onLogout, hasPassword }) {
   // Fetch the public plugin manifest once at boot. Errors are non-fatal —
   // the core app keeps running even if plugins fail to load.
   useEffect(() => {
-    fetch('/api/plugins/manifest')
+    fetch('/api/plugins/manifest', { headers: authHeaders() })
       .then(r => r.json())
       .then(res => {
         if (!res || !res.ok) return;
@@ -300,7 +300,7 @@ function App({ onLogout, hasPassword }) {
             ? html`<div class="max-w-5xl mx-auto p-4">
                 <${PageHeader} title="Plugins" onBack=${() => setTab('contacts')} />
                 <${PluginsManager} onPluginsChanged=${() => {
-                  fetch('/api/plugins/manifest').then(r => r.json()).then(res => {
+                  fetch('/api/plugins/manifest', { headers: authHeaders() }).then(r => r.json()).then(res => {
                     if (res && res.ok) {
                       const sc = (res.data.plugins || []).flatMap(p =>
                         (p.screens || []).map(s => ({ ...s, pluginId: s.pluginId || p.id }))

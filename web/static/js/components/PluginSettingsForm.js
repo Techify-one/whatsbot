@@ -6,6 +6,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
+import { authHeaders, handleUnauthorized } from '../services/api.js';
 
 const html = htm.bind(h);
 
@@ -91,7 +92,8 @@ export function PluginSettingsForm({ pluginId, onSaved }) {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`/api/plugins/${pluginId}/settings`);
+      const r = await fetch(`/api/plugins/${pluginId}/settings`, { headers: authHeaders() });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'failed to load');
       setSchema(data.data.schema);
@@ -112,9 +114,10 @@ export function PluginSettingsForm({ pluginId, onSaved }) {
     try {
       const r = await fetch(`/api/plugins/${pluginId}/settings`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(values),
       });
+      if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'failed to save');
       setValues(data.data.values || values);

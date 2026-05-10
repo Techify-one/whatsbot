@@ -7,6 +7,22 @@ import htm from 'htm';
 
 const html = htm.bind(h);
 
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('whatsbot_token') || '';
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
+}
+
+async function apiFetch(url, init = {}) {
+  const headers = authHeaders(init.headers || {});
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401) {
+    localStorage.removeItem('whatsbot_token');
+    window.dispatchEvent(new Event('whatsbot:unauthorized'));
+    throw new Error('Não autenticado.');
+  }
+  return res;
+}
+
 export default function LembretesScreen({ apiBase = '/api/plugins/lembretes' } = {}) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -15,21 +31,25 @@ export default function LembretesScreen({ apiBase = '/api/plugins/lembretes' } =
 
   async function load() {
     try {
-      const r = await fetch(`${apiBase}/items`);
+      const r = await apiFetch(`${apiBase}/items`);
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || 'erro');
       setItems(data.data || []);
       setError(null);
     } catch (e) {
-      setError(String(e));
+      setError(String(e.message || e));
     } finally {
       setLoading(false);
     }
   }
 
   async function remove(id) {
-    await fetch(`${apiBase}/items/${id}`, { method: 'DELETE' });
-    setItems((prev) => prev.filter((i) => i.id !== id));
+    try {
+      await apiFetch(`${apiBase}/items/${id}`, { method: 'DELETE' });
+      setItems((prev) => prev.filter((i) => i.id !== id));
+    } catch (e) {
+      setError(String(e.message || e));
+    }
   }
 
   useEffect(() => {
