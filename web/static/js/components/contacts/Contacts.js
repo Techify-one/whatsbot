@@ -521,8 +521,8 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
         <span class="text-wa-secondary text-[11px] select-none">${sidebarHidden ? '›' : '‹'}</span>
       </button>
       <!-- Chat panel -->
-      <div class="flex-1 min-w-0 ${!selected ? 'hidden lg:flex' : 'flex'} relative">
-        <div class="w-full flex flex-col">
+      <div class="flex-1 min-w-0 min-h-0 ${!selected ? 'hidden lg:flex' : 'flex'} relative">
+        <div class="w-full h-full flex flex-col">
           ${loadingDetail
             ? html`<div class="flex items-center justify-center h-full bg-wa-panel text-wa-secondary animate-pulse-slow text-[14px]">Carregando...</div>`
             : html`<${ContactDetail}
