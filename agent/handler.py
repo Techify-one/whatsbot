@@ -537,18 +537,21 @@ class AgentHandler:
 
         try:
             client = self._get_async_client()
+            active_tools = self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,
-                "tools": [t["function"]["name"] for t in ALL_TOOLS],
+                "tools": [t["function"]["name"] for t in active_tools],
             })
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=ALL_TOOLS,
-                tool_choice="auto",
-                max_tokens=1024,
-            )
+            create_kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 1024,
+            }
+            if active_tools:
+                create_kwargs["tools"] = active_tools
+                create_kwargs["tool_choice"] = "auto"
+            response = await client.chat.completions.create(**create_kwargs)
 
             self._record_usage(sender, "text", self.model, response)
             usage = response.usage
@@ -561,6 +564,7 @@ class AgentHandler:
             msg = response.choices[0].message
 
             executed_tools: list[dict] = []
+            tool_feedbacks: dict[str, str] = {}
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     tool_name = tc.function.name
@@ -570,20 +574,9 @@ class AgentHandler:
                         logger.warning("Failed to parse tool args for %s: %s", sender, e)
                         args = {}
 
-                    if tool_name == "save_contact_info":
-                        try:
-                            contact.update_info(**args)
-                        except Exception as e:
-                            logger.warning("Failed to execute %s for %s: %s", tool_name, sender, e)
-                    elif tool_name == "transfer_to_human":
-                        try:
-                            contact.set_ai_enabled(False)
-                            self.tag_registry.create("transferido_atendente", "#ef4444")
-                            contact.add_tag("transferido_atendente")
-                            contact.save()
-                            logger.info("Transfer to human for %s: %s", sender, args.get("reason", ""))
-                        except Exception as e:
-                            logger.warning("Failed to execute %s for %s: %s", tool_name, sender, e)
+                    feedback = self._dispatch_tool(contact, tool_name, args)
+                    if feedback:
+                        tool_feedbacks[tc.id] = feedback
 
                     executed_tools.append({"tool": tool_name, "args": args})
                     track_step("tool_executed", {"tool": tool_name, "args": args})
@@ -591,14 +584,11 @@ class AgentHandler:
 
                 if not msg.content:
                     messages.append(msg.model_dump())
-                    tool_results = {
-                        "transfer_to_human": "Transferência realizada. Responda ao cliente de forma curta e natural, apenas confirmando que já vai ser atendido pela pessoa solicitada. NÃO mencione 'humano', 'atendente' nem 'transferência'.",
-                    }
                     for tc in msg.tool_calls:
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": tool_results.get(tc.function.name, "Informações salvas com sucesso."),
+                            "content": tool_feedbacks.get(tc.id, "Informações salvas com sucesso."),
                         })
                     track_step("llm_request", {"model": self.model, "type": "followup"})
                     follow_up = await client.chat.completions.create(
