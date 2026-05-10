@@ -15,7 +15,7 @@ from fastapi import Request
 from fastapi import UploadFile
 from fastapi.responses import StreamingResponse
 
-from db.repositories import config_repo, plugin_repo
+from db.repositories import config_repo, plugin_repo, tool_override_repo
 from plugins.manifest import (
     WHATSBOT_API_VERSION,
     find_manifest_file,
@@ -114,7 +114,12 @@ def register_routes(app, deps):
             dropped = plugin_repo.drop_plugin_tables(plugin_id)
             plugin_repo.delete(plugin_id)
             config_repo.delete_prefix(f"plugin.{plugin_id}.")
-            return {"folder_removed": had_dir, "tables_dropped": dropped}
+            overrides_removed = tool_override_repo.delete_for_plugin(plugin_id)
+            return {
+                "folder_removed": had_dir,
+                "tables_dropped": dropped,
+                "tool_overrides_removed": overrides_removed,
+            }
 
         result = await asyncio.to_thread(_do_delete)
         schedule_restart(reason=f"plugin {plugin_id} deleted")

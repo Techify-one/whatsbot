@@ -84,6 +84,7 @@ Todos os dados persistentes ficam em um único arquivo SQLite: `storages/whatsbo
 | `plugins` | Plugins descobertos no filesystem (id, version, enabled, load_error) |
 | `plugin_migrations` | Versões de SQL migrations já aplicadas, por plugin |
 | `plugin_<id>_*` | Tabelas criadas por plugins via suas migrations (prefixo obrigatório) |
+| `tool_overrides` | Override por-tool (enabled, description, display_label). Row criada automaticamente para cada tool registrada (core + plugin) |
 
 ### Configuração do SQLite
 
@@ -139,6 +140,8 @@ Info é salva automaticamente via tool calling do LLM e injetada no system promp
 | GET | `/api/contacts?archived=true` | Lista apenas contatos/grupos arquivados |
 | GET | `/api/webhook-payloads?limit=N` | Últimos N payloads raw do webhook (debug, max 50) |
 | GET | `/api/gowa-logs?limit=N` | Tail do `logs/gowa.log` (stdout/stderr do subprocess GOWA, só populado com `WHATSBOT_GOWA_DEBUG=1`) |
+| GET | `/api/tools` | Lista todas as tools registradas (core + plugin) com estado de override |
+| PUT | `/api/tools/{name}` | Atualiza override `{enabled?, description?, display_label?}`; `description=null` reseta |
 | GET | `/api/plugins` | Lista todos os plugins descobertos com status (ativo/inativo/erro) |
 | GET | `/api/plugins/manifest` | Manifest público dos plugins ativos (pro frontend dinâmico) |
 | POST | `/api/plugins/{id}/enable` | Ativa o plugin e dispara restart |
@@ -185,6 +188,7 @@ Campos do payload do webhook GOWA: `body`, `from`, `sender_jid`, `chat_id`, `id`
 - Frontend: ES modules, componentes Preact em PascalCase, services/hooks em camelCase
 - **Tools do LLM (core)**: criar em `agent/tools/<name>.py` com (a) o schema dict (`<NAME>_TOOL = {"type": "function", ...}`) e (b) função `execute(ctx, args) -> str | None`. Adicionar a tupla `(SCHEMA, execute)` em `CORE_TOOLS` em `agent/tools/__init__.py`. O dispatch é genérico via registry em `AgentHandler` — nunca adicionar `if/elif` por nome de tool
 - **Tools de plugin**: viver em `storages/plugins/<id>/tools.py` no formato `CORE_TOOLS = [(schema, executor), ...]` e ser declaradas no manifest. NÃO mexer em `agent/tools/` ou no handler
+- **Contrato de tool (core OU plugin)**: toda tool registrada vira row em `tool_overrides` automaticamente (via `tool_override_repo.ensure` no `_register_tool`). O usuário pode customizar `description` e `display_label` na tela `/tools`. O `name` da tool é IDENTIDADE e NÃO deve ser renomeado depois de release — quebra histórico de `usage` (`call_type=<name>`) e overrides do usuário. Description em código é o **default**: escreva como instrução clara pro LLM, deve funcionar sem customização. O schema também aceita `"display_label": "..."` no dict raiz (fora de `function`) — o handler retira antes de mandar pro LLM, e o valor vira o default mostrado na UI
 - **Acesso a dados**: sempre via repositórios em `db/repositories/`. Nunca usar `sqlite3` diretamente fora do módulo `db/` ou da pasta de um plugin
 
 ## Dados do projeto

@@ -9,6 +9,7 @@ import { Executions } from './components/Executions.js';
 import { LoginScreen } from './components/LoginScreen.js';
 import { PluginsManager } from './components/PluginsManager.js';
 import { PluginScreen } from './components/PluginScreen.js';
+import { ToolsManager } from './components/ToolsManager.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
 import { checkAuth } from './services/api.js';
@@ -24,6 +25,7 @@ const CORE_ROUTES = {
   '/costs': 'costs',
   '/executions': 'executions',
   '/plugins': 'plugins',
+  '/tools': 'tools',
 };
 const CORE_TAB_PATHS = {
   contacts: '/',
@@ -32,6 +34,7 @@ const CORE_TAB_PATHS = {
   costs: '/costs',
   executions: '/executions',
   plugins: '/plugins',
+  tools: '/tools',
 };
 
 // Tab id used internally for plugin screens. We encode the plugin id and
@@ -60,15 +63,23 @@ function contactIdFromPath() {
   return m ? parseInt(m[1], 10) : null;
 }
 
-function MenuItem({ active, onClick, icon, children }) {
+function MenuItem({ active, href, onClick, icon, children }) {
+  function handleClick(e) {
+    // Let the browser handle modified clicks (Ctrl/Cmd/Shift) and middle-click
+    // so users can open the menu item in a new tab/window.
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    onClick();
+  }
   return html`
-    <button
-      onClick=${onClick}
-      class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 ${active ? 'text-wa-teal font-medium' : 'text-wa-text'}"
+    <a
+      href=${href}
+      onClick=${handleClick}
+      class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 no-underline ${active ? 'text-wa-teal font-medium' : 'text-wa-text'}"
     >
       ${icon}
       ${children}
-    </button>
+    </a>
   `;
 }
 
@@ -98,16 +109,16 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout }) {
       </button>
       ${open ? html`
         <div class="absolute right-0 mt-1 bg-white rounded-lg shadow-lg border border-wa-border py-1 min-w-[180px] max-h-[80vh] overflow-y-auto">
-          <${MenuItem} active=${tab === 'dashboard'} onClick=${() => { onTabChange('dashboard'); close(); }}
+          <${MenuItem} active=${tab === 'dashboard'} href=${CORE_TAB_PATHS.dashboard} onClick=${() => { onTabChange('dashboard'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>`}
           >Painel</${MenuItem}>
-          <${MenuItem} active=${tab === 'sandbox'} onClick=${() => { onTabChange('sandbox'); close(); }}
+          <${MenuItem} active=${tab === 'sandbox'} href=${CORE_TAB_PATHS.sandbox} onClick=${() => { onTabChange('sandbox'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 5h10v2h2V3c0-.55-.45-1-1-1H6c-.55 0-1 .45-1 1v4h2V5zm8.41 11.59L20 12l-4.59-4.59L14 8.83 17.17 12 14 15.17l1.41 1.42zM10 15.17L6.83 12 10 8.83 8.59 7.41 4 12l4.59 4.59L10 15.17zM17 19H7v-2H5v4c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-4h-2v2z"/></svg>`}
           >Sandbox</${MenuItem}>
-          <${MenuItem} active=${tab === 'costs'} onClick=${() => { onTabChange('costs'); close(); }}
+          <${MenuItem} active=${tab === 'costs'} href=${CORE_TAB_PATHS.costs} onClick=${() => { onTabChange('costs'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>`}
           >Custos</${MenuItem}>
-          <${MenuItem} active=${tab === 'executions'} onClick=${() => { onTabChange('executions'); close(); }}
+          <${MenuItem} active=${tab === 'executions'} href=${CORE_TAB_PATHS.executions} onClick=${() => { onTabChange('executions'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>`}
           >Execuções</${MenuItem}>
 
@@ -120,6 +131,7 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout }) {
               <${MenuItem}
                 key=${pluginTabId(s)}
                 active=${tab === pluginTabId(s)}
+                href=${s.path}
                 onClick=${() => { onTabChange(pluginTabId(s)); close(); }}
                 icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M5 3h6v8H5V3zm8 0h6v6h-6V3zm0 8h6v10h-6V11zm-8 4h6v6H5v-6z"/></svg>`}
               >${s.title}</${MenuItem}>
@@ -127,7 +139,10 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout }) {
           ` : null}
 
           <div class="border-t border-wa-border my-1"></div>
-          <${MenuItem} active=${tab === 'plugins'} onClick=${() => { onTabChange('plugins'); close(); }}
+          <${MenuItem} active=${tab === 'tools'} href=${CORE_TAB_PATHS.tools} onClick=${() => { onTabChange('tools'); close(); }}
+            icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>`}
+          >Gerenciar Tools</${MenuItem}>
+          <${MenuItem} active=${tab === 'plugins'} href=${CORE_TAB_PATHS.plugins} onClick=${() => { onTabChange('plugins'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7s2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>`}
           >Gerenciar Plugins</${MenuItem}>
 
@@ -276,7 +291,12 @@ function App({ onLogout, hasPassword }) {
               <${PageHeader} title=${activePluginScreen.title} onBack=${() => setTab('contacts')} />
               <${PluginScreen} screen=${activePluginScreen} />
             </div>`
-          : tab === 'plugins'
+          : tab === 'tools'
+            ? html`<div class="max-w-5xl mx-auto p-4">
+                <${PageHeader} title="Tools" onBack=${() => setTab('contacts')} />
+                <${ToolsManager} />
+              </div>`
+            : tab === 'plugins'
             ? html`<div class="max-w-5xl mx-auto p-4">
                 <${PageHeader} title="Plugins" onBack=${() => setTab('contacts')} />
                 <${PluginsManager} onPluginsChanged=${() => {

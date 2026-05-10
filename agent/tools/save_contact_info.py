@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 SAVE_CONTACT_INFO_TOOL = {
     "type": "function",
+    "display_label": "Salvar Dados do Contato",
     "function": {
         "name": "save_contact_info",
         "description": (

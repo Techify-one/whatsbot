@@ -15,7 +15,8 @@ from server.auth import auth_required, verify_token
 from server.helpers import _get_web_dir
 from server.state import MemoryLogHandler, ConnectionManager, AppState
 from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task
-from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, plugins as plugins_routes
+from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, plugins as plugins_routes, tools as tools_routes
+from db.repositories import tool_override_repo
 from plugins.loader import bootstrap_initial_plugins, discover_and_load, PluginRegistry
 from plugins.context import set_runtime as _set_plugin_runtime
 
@@ -86,6 +87,17 @@ def create_app(
             agent_handler.register_plugin_tools(loaded.id, loaded.tools)
         if loaded.prompt_fragments:
             agent_handler.register_plugin_prompts(loaded.id, loaded.prompt_fragments)
+
+    # Tool override cleanup: drop rows for tools that no longer exist (renamed
+    # in core, or belonging to a plugin that was removed). Then build the
+    # effective tool list applied to the LLM.
+    try:
+        dropped = tool_override_repo.delete_orphans(agent_handler.known_tool_names())
+        if dropped:
+            logger.info("Removed %d orphan tool_overrides rows", dropped)
+    except Exception as e:
+        logger.warning("tool_overrides orphan cleanup failed: %s", e)
+    agent_handler.refresh_tool_overrides()
 
     deps = ServerDeps(
         settings=settings,
@@ -168,7 +180,7 @@ def create_app(
         if s.get("path", "").startswith("/")
     }
     _SPA_PATHS = (
-        {"/", "/dashboard", "/sandbox", "/costs", "/executions", "/plugins"}
+        {"/", "/dashboard", "/sandbox", "/costs", "/executions", "/plugins", "/tools"}
         | _PLUGIN_SPA_PATHS
     )
 
@@ -232,6 +244,7 @@ def create_app(
     @app.get("/costs")
     @app.get("/executions")
     @app.get("/plugins")
+    @app.get("/tools")
     @app.get("/contacts/{contact_id:int}")
     async def index(contact_id: int | None = None):
         index_file = web_dir / "index.html"
@@ -266,6 +279,7 @@ def create_app(
     executions.register_routes(app, deps)
     update.register_routes(app, deps)
     plugins_routes.register_routes(app, deps)
+    tools_routes.register_routes(app, deps)
 
     # ── Plugin routers and static assets ──────────────────────────────
     for loaded in registry.loaded.values():

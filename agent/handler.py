@@ -1,4 +1,5 @@
 import base64
+import copy
 import dataclasses
 import json
 import logging
@@ -11,7 +12,7 @@ from openai import OpenAI
 
 from agent.memory import ContactMemory, TagRegistry, _build_image_content
 from agent.tools import CORE_TOOLS
-from db.repositories import message_repo, contact_repo
+from db.repositories import message_repo, contact_repo, tool_override_repo
 from agent.execution import track_step
 from plugins.context import ToolContext, PromptContext
 
@@ -57,7 +58,16 @@ class AgentHandler:
 
         # Tool registry — populated with core tools at construction; plugins
         # call ``register_plugin_tools`` after the loader runs.
+        # ``_tool_originals`` keeps the canonical schema as defined in code
+        # (already stripped of non-OpenAI fields like ``display_label``).
+        # ``_tool_schemas`` is the *effective* list sent to the LLM, rebuilt
+        # whenever overrides change.
+        # ``_tool_default_labels`` holds the in-code ``display_label`` per tool
+        # — UI default when the user hasn't customized it.
+        self._tool_originals: dict[str, dict] = {}
+        self._tool_default_labels: dict[str, str] = {}
         self._tool_schemas: list[dict] = []
+        self._disabled_tools: set[str] = set()
         # name -> (executor_callable, plugin_id_or_None)
         self._tool_executors: dict[str, tuple[callable, str | None]] = {}
         for schema, executor in CORE_TOOLS:
@@ -73,7 +83,13 @@ class AgentHandler:
         executor: callable,
         plugin_id: str | None = None,
     ) -> None:
-        """Register a tool schema + executor. No-ops on name collision."""
+        """Register a tool schema + executor. No-ops on name collision.
+
+        Stores a clean deep-copy in ``_tool_originals`` (with WhatsBot-specific
+        keys like ``display_label`` stripped, so it's safe to send to the LLM
+        as-is) and eagerly inserts a default row into ``tool_overrides`` so the
+        management UI sees every registered tool.
+        """
         try:
             name = schema["function"]["name"]
         except (KeyError, TypeError):
@@ -86,8 +102,19 @@ class AgentHandler:
                 name, existing_pid or "core", plugin_id or "core",
             )
             return
-        self._tool_schemas.append(schema)
+        # Pluck WhatsBot-only metadata so the schema we pass to OpenAI/OpenRouter
+        # is a clean tool spec.
+        clean = copy.deepcopy(schema)
+        default_label = clean.pop("display_label", None)
+        if default_label:
+            self._tool_default_labels[name] = str(default_label)
+        self._tool_originals[name] = clean
+        self._tool_schemas.append(clean)
         self._tool_executors[name] = (executor, plugin_id)
+        try:
+            tool_override_repo.ensure(name, plugin_id)
+        except Exception as e:
+            logger.warning("tool_overrides.ensure failed for %s: %s", name, e)
 
     def register_plugin_tools(
         self,
@@ -106,6 +133,72 @@ class AgentHandler:
         """Register prompt fragments from a plugin. Called by the plugin loader."""
         for fn in fragments:
             self._prompt_fragments.append((fn, plugin_id))
+
+    def known_tool_names(self) -> set[str]:
+        """Names of every tool currently registered (core + plugin)."""
+        return set(self._tool_originals.keys())
+
+    def refresh_tool_overrides(self) -> None:
+        """Re-read ``tool_overrides`` and rebuild ``_tool_schemas``.
+
+        Called after every PUT on /api/tools/{name} and once after plugin
+        loading at startup. Atomically replaces ``_tool_schemas`` so requests
+        already in flight keep their captured reference.
+
+        Plugin tools registered after startup are not supported today — plugin
+        enable/disable forces a server restart, and this method assumes the
+        registry is stable when called.
+        """
+        try:
+            overrides = {row["name"]: row for row in tool_override_repo.list_all()}
+        except Exception as e:
+            logger.warning("Failed to read tool_overrides: %s", e)
+            overrides = {}
+        new_schemas: list[dict] = []
+        new_disabled: set[str] = set()
+        for name, original in self._tool_originals.items():
+            ov = overrides.get(name)
+            if ov and not ov["enabled"]:
+                new_disabled.add(name)
+                continue
+            if ov and ov.get("description"):
+                schema = copy.deepcopy(original)
+                schema["function"]["description"] = ov["description"]
+                new_schemas.append(schema)
+            else:
+                new_schemas.append(original)
+        self._tool_schemas = new_schemas
+        self._disabled_tools = new_disabled
+
+    def list_tools(self) -> list[dict]:
+        """Return metadata for every registered tool, with override state merged."""
+        try:
+            overrides = {row["name"]: row for row in tool_override_repo.list_all()}
+        except Exception:
+            overrides = {}
+        items: list[dict] = []
+        for name, original in self._tool_originals.items():
+            fn = original.get("function", {})
+            default_description = fn.get("description", "")
+            default_label = self._tool_default_labels.get(name)
+            _, plugin_id = self._tool_executors.get(name, (None, None))
+            ov = overrides.get(name) or {}
+            current_description = ov.get("description") or default_description
+            current_label = ov.get("display_label") or default_label
+            items.append({
+                "name": name,
+                "plugin_id": plugin_id,
+                "default_description": default_description,
+                "current_description": current_description,
+                "default_label": default_label,
+                "display_label": ov.get("display_label"),
+                "current_label": current_label,
+                "enabled": bool(ov.get("enabled", 1)),
+                "has_override": bool(ov.get("description")),
+                "has_label_override": bool(ov.get("display_label")),
+                "parameters_schema": fn.get("parameters", {}),
+            })
+        return items
 
     def _make_tool_ctx(
         self,
@@ -129,6 +222,9 @@ class AgentHandler:
         entry = self._tool_executors.get(name)
         if not entry:
             logger.warning("Unknown tool: %s", name)
+            return None
+        if name in self._disabled_tools:
+            logger.info("Tool '%s' is disabled by user override; skipping", name)
             return None
         executor, plugin_id = entry
         ctx = self._make_tool_ctx(contact, plugin_id=plugin_id)
@@ -417,18 +513,21 @@ class AgentHandler:
 
         try:
             client = self._get_client()
+            active_tools = self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,
-                "tools": [t["function"]["name"] for t in self._tool_schemas],
+                "tools": [t["function"]["name"] for t in active_tools],
             })
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=self._tool_schemas,
-                tool_choice="auto",
-                max_tokens=1024,
-            )
+            create_kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 1024,
+            }
+            if active_tools:
+                create_kwargs["tools"] = active_tools
+                create_kwargs["tool_choice"] = "auto"
+            response = client.chat.completions.create(**create_kwargs)
 
             self._record_usage(sender, "text", self.model, response)
             usage = response.usage

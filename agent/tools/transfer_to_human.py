@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 TRANSFER_TO_HUMAN_TOOL = {
     "type": "function",
+    "display_label": "Transferir para Humano",
     "function": {
         "name": "transfer_to_human",
         "description": (

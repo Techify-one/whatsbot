@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 REMINDER_TOOL = {
     "type": "function",
+    "display_label": "Criar Lembretes",
     "function": {
         "name": "reminder_create",
         "description": (

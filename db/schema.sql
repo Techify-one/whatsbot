@@ -117,3 +117,13 @@ CREATE TABLE IF NOT EXISTS plugin_migrations (
     applied_at REAL    NOT NULL,
     PRIMARY KEY (plugin_id, version)
 );
+
+CREATE TABLE IF NOT EXISTS tool_overrides (
+    name           TEXT    PRIMARY KEY,
+    plugin_id      TEXT,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    description    TEXT,
+    display_label  TEXT,
+    updated_at     REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_overrides_plugin ON tool_overrides(plugin_id);

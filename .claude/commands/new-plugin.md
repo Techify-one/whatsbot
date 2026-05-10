@@ -84,6 +84,7 @@ logger = logging.getLogger(__name__)
 
 MY_TOOL = {
     "type": "function",
+    "display_label": "<Rótulo legível>",  # opcional — default mostrado em /tools
     "function": {
         "name": "<tool_name>",   # único globalmente
         "description": "<descrição clara, instrui quando chamar>",
@@ -205,3 +206,15 @@ Ao terminar, mostre:
 - **Tool name é global**: se conflitar com um nome existente o loader rejeita o plugin. Prefira nomes específicos como `<id>_<verbo>` (ex: `orders_create`, `cardapio_listar`).
 - **Settings UI é gerada automaticamente** a partir do schema Pydantic — strings, ints, floats, bools, enums. Não escreva form manual.
 - **Migrations rodam uma única vez** por versão. Para evoluir o schema, crie `002_*.sql`, `003_*.sql` — não edite `001`.
+
+## Contrato de tools (importante)
+
+Toda tool registrada num plugin é automaticamente inserida na tabela `tool_overrides` com defaults (enabled=1, description=NULL). O usuário pode customizar via UI em `/tools` — ligar/desligar, editar a description que vai pro LLM, e renomear o display label.
+
+Por isso:
+
+- **`name`** vira identidade pública e estável. **NÃO renomeie** depois de release — quebra histórico de `usage` (que grava `call_type=<name>`) e qualquer override que o usuário tenha criado. Para evoluir, crie uma tool nova e deprecie a antiga.
+- **`description`** em código é o **default** mostrado na UI. Escreva como instrução clara pro LLM (quando usar / quando NÃO usar) — seu default precisa funcionar sem customização. O usuário pode sobrescrever, mas o reset volta pro seu texto.
+- **`display_label`** (opcional, no nível do dict raiz, fora de `function`) é o rótulo legível mostrado em `/tools`. O handler retira esse campo antes de mandar pro LLM (não vai pra OpenAI). Use português, curto. Ex: `"display_label": "Salva Dados do Contato"`.
+- Quando o plugin é deletado pela UI, todas as overrides daquele plugin somem junto (`delete_for_plugin` no DELETE do plugin).
+- Convenção de naming: `<plugin_id>_<verbo>` (ex: `lembretes_create`, `orders_search`) — evita colisão e ajuda o usuário a saber de que plugin a tool veio.
