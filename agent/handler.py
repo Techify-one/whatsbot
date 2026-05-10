@@ -429,6 +429,16 @@ class AgentHandler:
                 "informação NOVA na mensagem mais recente.\n"
                 "--- Fim das informações ---"
             )
+        tags_summary = contact.get_tags_summary()
+        if tags_summary:
+            prompt += (
+                f"\n\n--- Tags do contato ---\n"
+                f"{tags_summary}\n"
+                "Estas tags foram aplicadas por operadores humanos para classificar este contato. "
+                "Use-as como sinal de contexto sobre o histórico/perfil do contato, mas não as "
+                "mencione diretamente na conversa nem peça confirmação sobre elas.\n"
+                "--- Fim das tags ---"
+            )
         prompt += (
             "\n\nMensagens marcadas com '[Mensagem do operador humano]' no histórico "
             "foram enviadas por um atendente real, não por você. Considere o contexto "
