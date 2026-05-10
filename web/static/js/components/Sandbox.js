@@ -117,7 +117,13 @@ function ChatPanel() {
     try {
       const res = await sandboxSend(phone, text);
       if (res.ok) {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.data.reply, ts: new Date() }]);
+        const replies = Array.isArray(res.data.replies) && res.data.replies.length
+          ? res.data.replies
+          : [res.data.reply];
+        const newBubbles = replies
+          .filter(r => r && r.trim())
+          .map(r => ({ role: 'assistant', content: r, ts: new Date() }));
+        setMessages(prev => [...prev, ...newBubbles]);
       } else {
         setMessages(prev => [...prev, { role: 'error', content: res.error || 'Erro desconhecido', ts: new Date() }]);
       }
@@ -198,8 +204,8 @@ function ChatPanel() {
           value=${input}
           onInput=${(e) => setInput(e.target.value)}
           placeholder="Digite uma mensagem..."
-          disabled=${sending}
-          class="flex-1 bg-white border border-wa-border rounded-lg px-3 py-2 text-sm text-wa-text placeholder-wa-secondary focus:border-wa-teal focus:outline-none disabled:opacity-50"
+          autoFocus
+          class="flex-1 bg-white border border-wa-border rounded-lg px-3 py-2 text-sm text-wa-text placeholder-wa-secondary focus:border-wa-teal focus:outline-none"
         />
         <button
           type="submit"

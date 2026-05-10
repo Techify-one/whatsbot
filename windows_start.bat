@@ -212,4 +212,4 @@ exit
 cd /d "%~dp0"
 call venv\Scripts\activate.bat
 set NO_COLOR=1
-uvicorn server.dev:app --host 0.0.0.0 --port 8080 --reload --reload-dir server --reload-dir agent --reload-dir config --reload-dir gowa --reload-dir db --log-level warning
+uvicorn server.dev:app --host 0.0.0.0 --port 8080 --reload --reload-dir server --reload-dir agent --reload-dir config --reload-dir gowa --reload-dir db --reload-dir plugins --reload-dir storages\plugins --log-level warning

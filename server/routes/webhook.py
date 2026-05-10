@@ -12,7 +12,7 @@ from gowa.client import GOWASendError, extract_msg_id
 
 from db.repositories import contact_repo, message_repo
 from server.execution import astart_execution, aend_execution, atrack_step, prune_executions
-from server.helpers import _ok
+from server.helpers import _ok, parse_split_reply
 
 logger = logging.getLogger(__name__)
 
@@ -59,30 +59,12 @@ def register_routes(app, deps):
 
     # ── Reply Splitting & Sending ─────────────────────────────────
 
-    def _parse_split_reply(reply: str) -> list[str]:
-        """Parse LLM reply as JSON array of strings. Fallback to single message."""
-        text = reply.strip()
-        # Strip markdown code block if LLM wraps in ```json ... ```
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1]).strip()
-        if text.startswith("["):
-            try:
-                parts = json.loads(text)
-                if isinstance(parts, list) and all(isinstance(p, str) for p in parts):
-                    filtered = [p.strip() for p in parts if p.strip()]
-                    if filtered:
-                        return filtered
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return [reply]
-
     async def _send_reply(phone: str, reply: str):
         """Send reply (possibly split into multiple parts) and broadcast."""
         split_enabled = settings.get("split_messages", True)
 
         if split_enabled:
-            parts = _parse_split_reply(reply)
+            parts = parse_split_reply(reply)
         else:
             parts = [reply]
 

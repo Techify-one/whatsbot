@@ -27,7 +27,7 @@ Antes de gerar qualquer arquivo, **leia** estes arquivos para seguir os padrões
 - [db/schema.sql](db/schema.sql) — estilo de SQL (CREATE TABLE IF NOT EXISTS, índices)
 - [server/routes/tags.py](server/routes/tags.py) — padrão de APIRouter + helpers `_ok`/`_err`
 - [web/static/js/components/Dashboard.js](web/static/js/components/Dashboard.js) — padrão de componente Preact + HTM
-- [storages/plugins/example/](storages/plugins/example/) — plugin completo de referência (copie e adapte)
+- [storages/plugins/lembretes/](storages/plugins/lembretes/) — plugin completo de referência (copie e adapte)
 
 ## Passo 3 — Gerar a estrutura
 

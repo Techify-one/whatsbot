@@ -17,6 +17,7 @@ from server.state import MemoryLogHandler, ConnectionManager, AppState
 from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task
 from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, plugins as plugins_routes
 from plugins.loader import bootstrap_initial_plugins, discover_and_load, PluginRegistry
+from plugins.context import set_runtime as _set_plugin_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         state.stop_event.clear()
+        _set_plugin_runtime(ws_manager, asyncio.get_running_loop())
         tasks = [
             asyncio.create_task(start_gowa_task(deps)),
             asyncio.create_task(status_poll_loop(deps)),

@@ -7,12 +7,47 @@ Plugins receive ``plugin_id`` set; core tools receive ``None``.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import logging
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
     from agent.handler import AgentHandler
     from agent.memory import ContactMemory, TagRegistry
+
+logger = logging.getLogger(__name__)
+
+
+# ── WebSocket broadcast bridge for plugins ────────────────────────────────
+#
+# Plugin tool executors run synchronously inside ``asyncio.to_thread``. To let
+# a plugin push a real-time event to the frontend (e.g. "novo lembrete"), we
+# expose a thread-safe ``broadcast(event, data)`` helper that schedules the
+# coroutine on the main event loop. The server wires the ws_manager and loop
+# at startup via ``set_runtime``.
+
+_ws_manager: Optional[Any] = None
+_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def set_runtime(ws_manager: Any, loop: asyncio.AbstractEventLoop) -> None:
+    """Called once during server startup. Plugins read these via ``broadcast``."""
+    global _ws_manager, _loop
+    _ws_manager = ws_manager
+    _loop = loop
+
+
+def broadcast(event: str, data: dict) -> None:
+    """Best-effort WS broadcast from any thread. Never raises."""
+    if _ws_manager is None or _loop is None:
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(
+            _ws_manager.broadcast(event, data), _loop
+        )
+    except Exception as e:
+        logger.debug("plugin broadcast failed: %s", e)
 
 
 @dataclasses.dataclass

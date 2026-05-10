@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from server.execution import astart_execution, aend_execution, atrack_step, prune_executions
-from server.helpers import _ok, _err
+from server.helpers import _ok, _err, parse_split_reply
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,14 @@ def register_routes(app, deps):
             pass
 
         logger.info("[Sandbox] Reply to %s: %s", phone, result.reply[:80] if result.reply else "")
-        return _ok({"reply": result.reply, "phone": phone})
+
+        split_enabled = settings.get("split_messages", True)
+        if split_enabled and result.reply:
+            replies = parse_split_reply(result.reply)
+        else:
+            replies = [result.reply] if result.reply else []
+
+        return _ok({"reply": "\n".join(replies), "replies": replies, "phone": phone})
 
     @app.post("/api/sandbox/clear")
     async def sandbox_clear(body: dict):

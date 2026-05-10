@@ -1,0 +1,20 @@
+id: lembretes
+name: Lembretes
+version: 1.0.0
+whatsbot_api_version: ">=1.0,<2.0"
+description: Anota lembretes pedidos pelo contato (ex "me lembre de comprar pão") e mostra na tela com atualização em tempo real via WebSocket.
+author: WhatsBot
+entry:
+  tools: tools
+  routes: routes
+migrations: migrations
+screens:
+  - id: lembretes-home
+    title: Lembretes
+    path: /lembretes
+    icon: bell
+    component: /plugins/lembretes/static/lembretes.js
+permissions:
+  - llm.tool
+  - db.write
+dependencies: []
