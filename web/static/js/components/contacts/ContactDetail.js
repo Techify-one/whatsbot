@@ -94,13 +94,13 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
 
     setInput('');
 
-    // Add message optimistically
+    // Add message optimistically (status='operator' marks it as manual send)
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const msgTs = Date.now() / 1000;
     setContactData(prev => prev ? {
       ...prev,
       messages: [...(prev.messages || []), {
-        role: 'assistant', content: text, ts: msgTs,
+        role: 'assistant', content: text, ts: msgTs, status: 'operator',
         _localId: localId, _status: 'sending',
       }],
     } : prev);
@@ -109,7 +109,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
       const res = await sendMessage(phone, text);
       if (res.ok) {
         const msgId = res.data?.msg_id || null;
-        updateMsgByLocalId(localId, () => ({ _status: null, status: 'sent', msg_id: msgId }));
+        updateMsgByLocalId(localId, () => ({ _status: null, status: 'operator', msg_id: msgId }));
       } else {
         updateMsgByLocalId(localId, () => ({ _status: 'failed' }));
       }
@@ -121,11 +121,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
   }
 
   async function handleRetry(localId, text) {
-    updateMsgByLocalId(localId, () => ({ _status: 'sending', status: null }));
+    updateMsgByLocalId(localId, () => ({ _status: 'sending', status: 'operator' }));
     try {
       const res = await retrySend(phone, text);
       if (res.ok) {
-        updateMsgByLocalId(localId, () => ({ _status: null, status: 'sent' }));
+        updateMsgByLocalId(localId, () => ({ _status: null, status: 'operator' }));
       } else {
         updateMsgByLocalId(localId, () => ({ _status: 'failed', status: 'failed' }));
       }
@@ -182,13 +182,13 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
       setContactData(prev => prev ? {
         ...prev,
         messages: [...(prev.messages || []), {
-          role: 'assistant', content: '', ts: Date.now() / 1000,
+          role: 'assistant', content: '', ts: Date.now() / 1000, status: 'operator',
           media_type: 'image', media_path: localUrl, _localId: localId, _status: 'sending', _isLocalBlob: true,
         }],
       } : prev);
       try {
         const res = await sendImage(phone, media.file);
-        updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed', status: res.ok ? 'sent' : 'failed' }));
+        updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed', status: res.ok ? 'operator' : 'failed' }));
       } catch (err) {
         console.error('Send image error:', err);
         updateMsgByLocalId(localId, () => ({ _status: 'failed' }));
@@ -198,13 +198,13 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
       setContactData(prev => prev ? {
         ...prev,
         messages: [...(prev.messages || []), {
-          role: 'assistant', content: '[Áudio]', ts: Date.now() / 1000,
+          role: 'assistant', content: '[Áudio]', ts: Date.now() / 1000, status: 'operator',
           media_type: 'audio', media_path: localUrl, _localId: localId, _status: 'sending', _isLocalBlob: true,
         }],
       } : prev);
       try {
         const res = await sendAudio(phone, media.blob, media.filename);
-        updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed', status: res.ok ? 'sent' : 'failed' }));
+        updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed', status: res.ok ? 'operator' : 'failed' }));
       } catch (err) {
         console.error('Send audio error:', err);
         updateMsgByLocalId(localId, () => ({ _status: 'failed' }));
@@ -431,6 +431,9 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
 
               const isFailed = m._status === 'failed' || m.status === 'failed';
               const isSending = m._status === 'sending';
+              const isOperator = !isUser && m.status === 'operator';
+              const senderLabel = isUser ? displayName : (isOperator ? 'Manual' : 'IA');
+              const senderColor = isUser ? '#1f7aec' : (isOperator ? '#b45309' : '#047857');
 
               return html`
                 <div key=${m._localId || i} class="flex ${isUser ? 'justify-start' : 'justify-end'} ${isFirst ? 'mt-[12px]' : 'mt-[2px]'}">
@@ -439,6 +442,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       ? `bg-wa-incoming text-wa-text ${isFirst ? 'msg-tail-in rounded-tl-none' : ''}`
                       : `${isFailed ? 'text-wa-text' : 'bg-wa-outgoing text-wa-text'} ${isFirst ? 'msg-tail-out rounded-tr-none' : ''}`
                   }" style="${isFailed ? 'background: #fce8e8;' : ''}">
+                    <span class="block text-[11px] font-semibold leading-[13px] mb-[2px] truncate" style="color: ${senderColor};">${senderLabel}</span>
                     ${m.media_type === 'image' ? html`
                       <img
                         src="${m._isLocalBlob ? m.media_path : '/' + m.media_path}"

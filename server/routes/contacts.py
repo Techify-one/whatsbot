@@ -201,7 +201,7 @@ def register_routes(app, deps):
         try:
             msg_data = await asyncio.to_thread(
                 agent_handler.save_operator_message, phone, message,
-                status="failed" if send_failed else "sent",
+                status="failed" if send_failed else "operator",
                 msg_id=msg_id,
             )
         except Exception as e:
@@ -317,6 +317,10 @@ def register_routes(app, deps):
             return _err(f"Erro ao enviar imagem: {e}", status=500)
 
         msg_id = extract_msg_id(send_result)
+        # Filter GOWA echo-back: mark this msg_id as already processed so the
+        # webhook ignores it when the WhatsApp roundtrip echoes the message back.
+        if msg_id:
+            state.processed_messages.add(msg_id)
 
         # Relative path for storage and frontend
         rel_path = f"statics/senditems/{dest.name}"
@@ -326,12 +330,12 @@ def register_routes(app, deps):
             "ts": time.time(),
             "media_type": "image",
             "media_path": rel_path,
-            "status": "sent",
+            "status": "operator",
             "msg_id": msg_id,
         }
         contact = agent_handler._get_contact(phone)
         contact.add_message("assistant", caption, media_type="image", media_path=rel_path,
-                            status="sent", msg_id=msg_id)
+                            status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
         logger.info("[Send] Image sent to %s", phone)
@@ -375,6 +379,10 @@ def register_routes(app, deps):
             return _err(f"Erro ao enviar áudio: {e}", status=500)
 
         msg_id = extract_msg_id(send_result)
+        # Filter GOWA echo-back: mark this msg_id as already processed so the
+        # webhook ignores it when the WhatsApp roundtrip echoes the message back.
+        if msg_id:
+            state.processed_messages.add(msg_id)
 
         rel_path = f"statics/senditems/{dest.name}"
         msg_data = {
@@ -383,12 +391,12 @@ def register_routes(app, deps):
             "ts": time.time(),
             "media_type": "audio",
             "media_path": rel_path,
-            "status": "sent",
+            "status": "operator",
             "msg_id": msg_id,
         }
         contact = agent_handler._get_contact(phone)
         contact.add_message("assistant", "[Áudio]", media_type="audio", media_path=rel_path,
-                            status="sent", msg_id=msg_id)
+                            status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
         logger.info("[Send] Audio sent to %s", phone)

@@ -678,7 +678,8 @@ def register_routes(app, deps):
 
             # Broadcast to frontend
             broadcast_msg: dict = {"role": "assistant", "content": text,
-                                   "ts": time.time(), "msg_id": msg_id}
+                                   "ts": time.time(), "msg_id": msg_id,
+                                   "status": "operator"}
             if media_type:
                 broadcast_msg["media_type"] = media_type
                 broadcast_msg["media_path"] = media_path
