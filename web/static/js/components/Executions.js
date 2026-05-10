@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { getExecutions, getExecution } from '../services/api.js';
 
@@ -150,6 +150,11 @@ function ExecutionDetail({ execution, onBack }) {
 
 // ── List View ────────────────────────────────────────────────────
 
+function executionIdFromUrl() {
+  const m = window.location.pathname.match(/^\/executions\/(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 export function Executions() {
   const [executions, setExecutions] = useState([]);
   const [total, setTotal] = useState(0);
@@ -182,19 +187,49 @@ export function Executions() {
     return () => clearInterval(id);
   }, [fetchList]);
 
-  const handleSelect = useCallback(async (id) => {
+  const handleSelect = useCallback(async (id, opts = {}) => {
     const res = await getExecution(id);
     if (res.ok) {
       setSelectedData(res.data);
       setSelected(id);
+      if (!opts.skipPush) {
+        const target = `/executions/${id}`;
+        if (window.location.pathname !== target) {
+          history.pushState(null, '', target);
+        }
+      }
     }
   }, []);
 
   const handleBack = useCallback(() => {
     setSelected(null);
     setSelectedData(null);
+    if (window.location.pathname !== '/executions') {
+      history.pushState(null, '', '/executions');
+    }
     fetchList();
   }, [fetchList]);
+
+  // Open from URL on mount, and sync with browser back/forward via popstate.
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  useEffect(() => {
+    const initial = executionIdFromUrl();
+    if (initial != null) handleSelect(initial, { skipPush: true });
+
+    function onPop() {
+      const urlId = executionIdFromUrl();
+      if (urlId == null) {
+        setSelected(null);
+        setSelectedData(null);
+      } else if (urlId !== selectedRef.current) {
+        handleSelect(urlId, { skipPush: true });
+      }
+    }
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [handleSelect]);
 
   // Detail view
   if (selected && selectedData) {

@@ -189,7 +189,7 @@ def create_app(
         path = request.url.path
 
         # SPA pages, static assets, webhook, and auth endpoints are always open
-        if path in _SPA_PATHS or path.startswith(("/contacts/",)):
+        if path in _SPA_PATHS or path.startswith(("/contacts/", "/executions/")):
             return await call_next(request)
         if path in _AUTH_EXEMPT_EXACT:
             return await call_next(request)
@@ -246,7 +246,8 @@ def create_app(
     @app.get("/plugins")
     @app.get("/tools")
     @app.get("/contacts/{contact_id:int}")
-    async def index(contact_id: int | None = None):
+    @app.get("/executions/{execution_id:int}")
+    async def index(contact_id: int | None = None, execution_id: int | None = None):
         index_file = web_dir / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))

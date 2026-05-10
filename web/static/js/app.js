@@ -44,6 +44,7 @@ function pluginTabId(screen) { return `plugin:${screen.pluginId}:${screen.path}`
 function tabFromPath(pluginScreens) {
   const path = window.location.pathname;
   if (path.match(/^\/contacts\/\d+$/)) return 'contacts';
+  if (path.match(/^\/executions\/\d+$/)) return 'executions';
   const screen = (pluginScreens || []).find(s => s.path === path);
   if (screen) return pluginTabId(screen);
   return CORE_ROUTES[path] || 'contacts';
@@ -216,7 +217,12 @@ function App({ onLogout, hasPassword }) {
   const setTab = useCallback((t) => {
     setTabState(t);
     const path = pathForTab(t, pluginScreens);
-    if (window.location.pathname !== path) history.pushState(null, '', path);
+    if (window.location.pathname !== path) {
+      history.pushState(null, '', path);
+      // pushState doesn't fire popstate; notify listeners (e.g. Executions
+      // syncs its detail view with the URL).
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
   }, [pluginScreens]);
 
   useEffect(() => {
