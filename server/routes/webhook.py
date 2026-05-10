@@ -193,6 +193,56 @@ def register_routes(app, deps):
     # Expose broadcast_tool_calls for sandbox route
     deps.broadcast_tool_calls = _broadcast_tool_calls
 
+    # ── Audio Transcription Delivery ──────────────────────────────
+
+    async def _deliver_audio_transcription(phone: str, contact, transcription: str):
+        """Deliver an audio transcription based on the configured target.
+
+        target=private → save as 'transcription' role (operator-only card in the panel)
+        target=chat    → send a new WhatsApp message with the configured prefix
+        """
+        target = settings.get("audio_transcription_target", "private")
+
+        if target == "chat":
+            chat_prefix = settings.get("audio_transcription_chat_prefix", "") or ""
+            chat_message = f"{chat_prefix}{transcription}" if chat_prefix else transcription
+            # Suppress GOWA echo-back for the message we're about to send
+            sent_key = f"{phone}:{chat_message[:120]}"
+            state.recently_sent[sent_key] = time.time()
+            try:
+                send_result = await asyncio.to_thread(
+                    gowa_client.send_message, phone, chat_message)
+                sent_msg_id = extract_msg_id(send_result)
+                await asyncio.to_thread(
+                    contact.add_message, "assistant", chat_message,
+                    msg_id=sent_msg_id, status="operator")
+                await ws_manager.broadcast("new_message", {
+                    "phone": phone,
+                    "message": {
+                        "role": "assistant",
+                        "content": chat_message,
+                        "ts": time.time(),
+                        "status": "operator",
+                        "msg_id": sent_msg_id,
+                    },
+                })
+                return
+            except GOWASendError as e:
+                logger.error("[Webhook] Failed to send transcription to chat for %s: %s", phone, e)
+                state.recently_sent.pop(sent_key, None)
+                # Fall through to private so the transcription is not lost.
+
+        # private target (or fallback after a failed chat send)
+        await asyncio.to_thread(contact.add_message, "transcription", transcription)
+        await ws_manager.broadcast("new_message", {
+            "phone": phone,
+            "message": {
+                "role": "transcription",
+                "content": transcription,
+                "ts": time.time(),
+            },
+        })
+
     # ── Batch Processing ──────────────────────────────────────────
 
     # ── Typing-Aware Orchestrator ─────────────────────────────────
@@ -342,9 +392,10 @@ def register_routes(app, deps):
                     msg_id=item.get("msg_id"),
                 )
 
+                audio_mode = settings.get("audio_transcription_mode", "received")
                 transcription = ""
                 try:
-                    if audio_path and settings.get("audio_transcription_enabled", True):
+                    if audio_path and audio_mode in ("received", "both"):
                         transcription = await asyncio.to_thread(
                             agent_handler.transcribe_audio, audio_path, phone)
                     elif image_path and settings.get("image_transcription_enabled", True):
@@ -354,26 +405,30 @@ def register_routes(app, deps):
                     logger.error("[Batch] Transcription error for %s: %s", phone, e)
 
                 if transcription:
-                    contact.add_message("transcription", transcription)
                     if audio_path:
                         new_content = f"[Transcrição do áudio]: {transcription}"
                     elif image_path:
-                        prefix = f"[Descrição da imagem]: {transcription}"
-                        new_content = f"{prefix}\n{text}" if text else prefix
+                        desc_prefix = f"[Descrição da imagem]: {transcription}"
+                        new_content = f"{desc_prefix}\n{text}" if text else desc_prefix
                     else:
                         new_content = None
                     if new_content:
                         await asyncio.to_thread(
                             agent_handler.update_last_user_message_content, phone, new_content
                         )
-                    await ws_manager.broadcast("new_message", {
-                        "phone": phone,
-                        "message": {
-                            "role": "transcription",
-                            "content": transcription,
-                            "ts": time.time(),
-                        },
-                    })
+                    if audio_path:
+                        await _deliver_audio_transcription(phone, contact, transcription)
+                    else:
+                        # Image description — always delivered as a private panel card.
+                        contact.add_message("transcription", transcription)
+                        await ws_manager.broadcast("new_message", {
+                            "phone": phone,
+                            "message": {
+                                "role": "transcription",
+                                "content": transcription,
+                                "ts": time.time(),
+                            },
+                        })
 
                 if not contact.ai_enabled or not settings.get("auto_reply", True):
                     continue
@@ -765,6 +820,18 @@ def register_routes(app, deps):
                 "phone": phone,
                 "message": broadcast_msg,
             })
+
+            # Transcribe outgoing audio if the configured mode includes "sent"
+            audio_mode = settings.get("audio_transcription_mode", "received")
+            if audio_path and audio_mode in ("sent", "both"):
+                try:
+                    out_transcription = await asyncio.to_thread(
+                        agent_handler.transcribe_audio, audio_path, phone)
+                except Exception as e:
+                    logger.error("[Webhook] Outgoing audio transcription failed for %s: %s", phone, e)
+                    out_transcription = ""
+                if out_transcription:
+                    await _deliver_audio_transcription(phone, contact, out_transcription)
 
             return _ok({"status": "synced"})
 

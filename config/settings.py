@@ -45,7 +45,9 @@ DEFAULT_CONFIG = {
     "usd_brl_rate": 5.50,
     "split_messages": True,
     "split_message_delay": 2.0,
-    "audio_transcription_enabled": True,
+    "audio_transcription_mode": "received",
+    "audio_transcription_target": "private",
+    "audio_transcription_chat_prefix": "",
     "image_transcription_enabled": True,
     "transfer_alert_enabled": True,
     "transfer_alert_duration": 5,
@@ -68,6 +70,12 @@ class Settings:
 
     def load(self):
         self._config = config_repo.get_all()
+        # Migrate legacy audio_transcription_enabled → audio_transcription_mode
+        if "audio_transcription_enabled" in self._config:
+            legacy_enabled = self._config.pop("audio_transcription_enabled")
+            if "audio_transcription_mode" not in self._config:
+                self._config["audio_transcription_mode"] = "received" if legacy_enabled else "off"
+            config_repo.delete_prefix("audio_transcription_enabled")
         # Merge defaults for missing keys
         added = False
         for key, value in DEFAULT_CONFIG.items():

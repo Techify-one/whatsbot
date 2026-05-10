@@ -30,7 +30,9 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [batchDelay, setBatchDelay] = useState(3);
   const [splitMessages, setSplitMessages] = useState(true);
   const [splitDelay, setSplitDelay] = useState(2);
-  const [audioTranscriptionEnabled, setAudioTranscriptionEnabled] = useState(true);
+  const [audioTranscriptionMode, setAudioTranscriptionMode] = useState('received');
+  const [audioTranscriptionTarget, setAudioTranscriptionTarget] = useState('private');
+  const [audioTranscriptionChatPrefix, setAudioTranscriptionChatPrefix] = useState('');
   const [imageTranscriptionEnabled, setImageTranscriptionEnabled] = useState(true);
   const [transferAlertEnabled, setTransferAlertEnabled] = useState(true);
   const [transferAlertDuration, setTransferAlertDuration] = useState(5);
@@ -80,7 +82,9 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       setBatchDelay(config.message_batch_delay ?? 3);
       setSplitMessages(config.split_messages ?? true);
       setSplitDelay(config.split_message_delay ?? 2);
-      setAudioTranscriptionEnabled(config.audio_transcription_enabled ?? true);
+      setAudioTranscriptionMode(config.audio_transcription_mode ?? 'received');
+      setAudioTranscriptionTarget(config.audio_transcription_target ?? 'private');
+      setAudioTranscriptionChatPrefix(config.audio_transcription_chat_prefix ?? '');
       setImageTranscriptionEnabled(config.image_transcription_enabled ?? true);
       setTransferAlertEnabled(config.transfer_alert_enabled ?? true);
       setTransferAlertDuration(config.transfer_alert_duration ?? 5);
@@ -148,7 +152,9 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       message_batch_delay: isNaN(parseFloat(batchDelay)) ? 0 : parseFloat(batchDelay),
       split_messages: splitMessages,
       split_message_delay: isNaN(parseFloat(splitDelay)) ? 0 : parseFloat(splitDelay),
-      audio_transcription_enabled: audioTranscriptionEnabled,
+      audio_transcription_mode: audioTranscriptionMode,
+      audio_transcription_target: audioTranscriptionTarget,
+      audio_transcription_chat_prefix: audioTranscriptionChatPrefix,
       image_transcription_enabled: imageTranscriptionEnabled,
       transfer_alert_enabled: transferAlertEnabled,
       transfer_alert_duration: parseInt(transferAlertDuration, 10) || 5,
@@ -261,15 +267,6 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
               placeholder="google/gemini-3-flash-preview"
             />
             <span class="text-xs text-wa-secondary">Modelo com suporte a áudio</span>
-            <label class="flex items-center gap-2 mt-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked=${audioTranscriptionEnabled}
-                onChange=${(e) => setAudioTranscriptionEnabled(e.target.checked)}
-                class="accent-wa-teal w-4 h-4"
-              />
-              <span class="text-sm text-wa-text">Ativar transcrição de áudio</span>
-            </label>
           </div>
           <div>
             <label class="block text-sm font-semibold text-wa-text mb-1">Modelo descrição imagem</label>
@@ -290,6 +287,51 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
               <span class="text-sm text-wa-text">Ativar transcrição de imagem</span>
             </label>
           </div>
+        </div>
+
+        <!-- Audio transcription mode & target -->
+        <div class="flex flex-col gap-3 p-3 bg-wa-panel rounded-lg border border-wa-border">
+          <div class="text-sm font-semibold text-wa-text">Transcrição de áudio</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-wa-text mb-1">Transcrever mensagens</label>
+              <select
+                value=${audioTranscriptionMode}
+                onChange=${(e) => setAudioTranscriptionMode(e.target.value)}
+                class="w-full bg-white text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+              >
+                <option value="received">Somente recebidas</option>
+                <option value="sent">Somente enviadas</option>
+                <option value="both">Nos dois sentidos</option>
+                <option value="off">Não transcrever</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-wa-text mb-1">Onde aparece a transcrição</label>
+              <select
+                value=${audioTranscriptionTarget}
+                onChange=${(e) => setAudioTranscriptionTarget(e.target.value)}
+                disabled=${audioTranscriptionMode === 'off'}
+                class="w-full bg-white text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none disabled:opacity-50"
+              >
+                <option value="private">Mensagem privada (só no painel)</option>
+                <option value="chat">Direto no chat (envia ao contato)</option>
+              </select>
+            </div>
+          </div>
+          ${audioTranscriptionMode !== 'off' && audioTranscriptionTarget === 'chat' ? html`
+            <div>
+              <label class="block text-xs font-medium text-wa-text mb-1">Prefixo (opcional)</label>
+              <textarea
+                value=${audioTranscriptionChatPrefix}
+                onInput=${(e) => setAudioTranscriptionChatPrefix(e.target.value)}
+                rows="2"
+                placeholder="Ex: 🎙 Transcrição: "
+                class="w-full bg-white text-wa-text px-3 py-2 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none resize-none"
+              ></textarea>
+              <span class="text-xs text-wa-secondary">Texto colado antes da transcrição enviada ao chat. Deixe em branco para enviar só o texto.</span>
+            </div>
+          ` : null}
         </div>
       <//>
 

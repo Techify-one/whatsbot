@@ -41,7 +41,9 @@ def register_routes(app, deps):
             "message_batch_delay": settings.get("message_batch_delay", 3.0),
             "split_messages": settings.get("split_messages", True),
             "split_message_delay": settings.get("split_message_delay", 2.0),
-            "audio_transcription_enabled": settings.get("audio_transcription_enabled", True),
+            "audio_transcription_mode": settings.get("audio_transcription_mode", "received"),
+            "audio_transcription_target": settings.get("audio_transcription_target", "private"),
+            "audio_transcription_chat_prefix": settings.get("audio_transcription_chat_prefix", ""),
             "image_transcription_enabled": settings.get("image_transcription_enabled", True),
             "transfer_alert_enabled": settings.get("transfer_alert_enabled", True),
             "transfer_alert_duration": settings.get("transfer_alert_duration", 5),
@@ -54,7 +56,8 @@ def register_routes(app, deps):
     async def save_config(body: dict):
         allowed_keys = {
             "openrouter_api_key", "model", "audio_model", "image_model",
-            "audio_transcription_enabled", "image_transcription_enabled",
+            "audio_transcription_mode", "audio_transcription_target",
+            "audio_transcription_chat_prefix", "image_transcription_enabled",
             "system_prompt", "auto_reply",
             "max_context_messages", "message_batch_delay",
             "split_messages", "split_message_delay",
