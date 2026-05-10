@@ -744,22 +744,30 @@ def register_routes(app, deps):
             label = document_name or "documento"
             text = f"[Documento recebido: {label}]" if not is_from_me else f"[Documento enviado: {label}]"
 
-        # Extract chat and sender separately for group support
+        # Extract chat and sender separately for group support.
+        # GOWA v8.5.0 puts the chat in `chat_id` and the actual sender in `from`
+        # (in private chats they're the same JID; in groups they differ — `from`
+        # is the member who sent it, `chat_id` is the group). The legacy
+        # `sender_jid`/`sender` fields aren't always present.
         chat_jid = (data.get("chat_jid", "") or data.get("chat_id", "")
                     or data.get("from", "") or data.get("jid", ""))
-        sender_jid = data.get("sender_jid", "") or data.get("sender", "")
+        sender_jid = (data.get("sender_jid", "") or data.get("sender", "")
+                      or data.get("from", ""))
 
         is_group = "@g.us" in chat_jid
 
         if is_group:
             # For groups: route replies to the group, track individual sender
             phone = chat_jid  # keep full JID (e.g. 120363xxx@g.us)
-            individual_phone = sender_jid.split("@")[0] if "@" in sender_jid else sender_jid
+            # Strip @domain AND :device suffix from sender JID (multi-device WhatsApp
+            # sends "5511999999:25@s.whatsapp.net"; we want just the bare phone).
+            individual_phone = (sender_jid.split("@")[0].split(":")[0]
+                                if sender_jid else "")
             from_name = data.get("from_name", "") or data.get("pushName", "") or data.get("notify", "")
         else:
             # For private chats: use sender as before
             sender = sender_jid or chat_jid
-            phone = sender.split("@")[0] if "@" in sender else sender
+            phone = (sender.split("@")[0].split(":")[0] if sender else "")
             individual_phone = phone
             from_name = data.get("from_name", "") or data.get("pushName", "") or data.get("notify", "")
 
@@ -890,8 +898,20 @@ def register_routes(app, deps):
                 except Exception as e:
                     logger.warning("[Webhook] Failed to check group send permission: %s", e)
 
-            # Prefix message with sender name for group context
-            sender_label = from_name or individual_phone
+            # Prefix message with sender name for group context.
+            # Prefer the saved contact name (if the sender exists as a private
+            # contact), so renames in the contact info panel propagate to new
+            # group messages. Falls back to WhatsApp pushName, then phone.
+            saved_name = ""
+            try:
+                sender_contact = await asyncio.to_thread(
+                    contact_repo.get_by_phone, individual_phone)
+                if sender_contact and sender_contact.get("name"):
+                    saved_name = sender_contact["name"].lstrip("~").strip()
+            except Exception as e:
+                logger.warning("[Webhook] Failed to lookup sender contact %s: %s",
+                               individual_phone, e)
+            sender_label = saved_name or from_name or individual_phone
             if text:
                 display_text = f"[{sender_label}]: {text}"
 
