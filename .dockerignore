@@ -23,7 +23,6 @@ logs/
 data/
 
 # Dev / docs
-assets/
 plans/
 CLAUDE.md
 README.md
