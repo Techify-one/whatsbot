@@ -27,9 +27,9 @@ _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
 
 DEFAULT_CONFIG = {
     "openrouter_api_key": "",
-    "model": "openai/gpt-4o-mini",
-    "audio_model": "google/gemini-2.0-flash-001",
-    "image_model": "google/gemini-2.0-flash-001",
+    "model": "deepseek/deepseek-v4-pro",
+    "audio_model": "google/gemini-3-flash-preview",
+    "image_model": "google/gemini-3-flash-preview",
     "system_prompt": (
         "Você é um assistente útil e amigável. Responda de forma clara e concisa. "
         "Use português brasileiro."

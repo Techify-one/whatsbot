@@ -32,9 +32,9 @@ def register_routes(app, deps):
     async def get_config():
         return _ok({
             "openrouter_api_key": _mask_key(settings.get("openrouter_api_key", "")),
-            "model": settings.get("model", "openai/gpt-4o-mini"),
-            "audio_model": settings.get("audio_model", "google/gemini-2.0-flash-001"),
-            "image_model": settings.get("image_model", "google/gemini-2.0-flash-001"),
+            "model": settings.get("model", "deepseek/deepseek-v4-pro"),
+            "audio_model": settings.get("audio_model", "google/gemini-3-flash-preview"),
+            "image_model": settings.get("image_model", "google/gemini-3-flash-preview"),
             "system_prompt": settings.get("system_prompt", ""),
             "auto_reply": settings.get("auto_reply", True),
             "max_context_messages": settings.get("max_context_messages", 10),
@@ -84,9 +84,9 @@ def register_routes(app, deps):
         agent_handler.update_config(
             api_key=settings.get("openrouter_api_key", ""),
             system_prompt=settings.get("system_prompt", ""),
-            model=settings.get("model", "openai/gpt-4o-mini"),
-            audio_model=settings.get("audio_model", "google/gemini-2.0-flash-001"),
-            image_model=settings.get("image_model", "google/gemini-2.0-flash-001"),
+            model=settings.get("model", "deepseek/deepseek-v4-pro"),
+            audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
+            image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
             max_context_messages=settings.get("max_context_messages", 10),
             split_messages=settings.get("split_messages", True),
             default_ai_enabled=settings.get("default_ai_enabled", True),
@@ -109,9 +109,9 @@ def register_routes(app, deps):
             agent_handler.update_config(
                 api_key=api_key,
                 system_prompt=settings.get("system_prompt", ""),
-                model=settings.get("model", "openai/gpt-4o-mini"),
-                audio_model=settings.get("audio_model", "google/gemini-2.0-flash-001"),
-                image_model=settings.get("image_model", "google/gemini-2.0-flash-001"),
+                model=settings.get("model", "deepseek/deepseek-v4-pro"),
+                audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
+                image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
                 max_context_messages=settings.get("max_context_messages", 10),
             )
             logger.info("API key tested and auto-saved.")

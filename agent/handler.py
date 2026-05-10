@@ -36,9 +36,9 @@ class AgentHandler:
         system_prompt: str,
         max_context_messages: int = 10,
         inactivity_timeout_min: int = 30,
-        model: str = "openai/gpt-4o-mini",
-        audio_model: str = "google/gemini-2.0-flash-001",
-        image_model: str = "google/gemini-2.0-flash-001",
+        model: str = "deepseek/deepseek-v4-pro",
+        audio_model: str = "google/gemini-3-flash-preview",
+        image_model: str = "google/gemini-3-flash-preview",
         pricing_fn=None,
         default_ai_enabled: bool = True,
     ):

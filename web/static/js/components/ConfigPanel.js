@@ -139,9 +139,9 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
 
   async function handleSave() {
     const data = {
-      model: model.trim() || 'openai/gpt-4o-mini',
-      audio_model: audioModel.trim() || 'google/gemini-2.0-flash-001',
-      image_model: imageModel.trim() || 'google/gemini-2.0-flash-001',
+      model: model.trim() || 'deepseek/deepseek-v4-pro',
+      audio_model: audioModel.trim() || 'google/gemini-3-flash-preview',
+      image_model: imageModel.trim() || 'google/gemini-3-flash-preview',
       system_prompt: systemPrompt,
       auto_reply: autoReply,
       max_context_messages: parseInt(maxContext, 10) || 10,
@@ -246,7 +246,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           <${ModelSelect}
             value=${model}
             onChange=${setModel}
-            placeholder="openai/gpt-4o-mini"
+            placeholder="deepseek/deepseek-v4-pro"
           />
         </div>
 
@@ -258,7 +258,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
               value=${audioModel}
               onChange=${setAudioModel}
               filterModality="audio"
-              placeholder="google/gemini-2.0-flash-001"
+              placeholder="google/gemini-3-flash-preview"
             />
             <span class="text-xs text-wa-secondary">Modelo com suporte a áudio</span>
             <label class="flex items-center gap-2 mt-2 cursor-pointer">
@@ -277,7 +277,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
               value=${imageModel}
               onChange=${setImageModel}
               filterModality="image"
-              placeholder="google/gemini-2.0-flash-001"
+              placeholder="google/gemini-3-flash-preview"
             />
             <span class="text-xs text-wa-secondary">Modelo com suporte a visão</span>
             <label class="flex items-center gap-2 mt-2 cursor-pointer">
