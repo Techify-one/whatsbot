@@ -50,6 +50,26 @@ def broadcast(event: str, data: dict) -> None:
         logger.debug("plugin broadcast failed: %s", e)
 
 
+# ── DB access for plugins ────────────────────────────────────────────────
+#
+# Plugins access their dedicated ``plugin_<id>_*`` tables through the shared
+# SQLAlchemy engine — there is no separate per-plugin database. The
+# ``plugin_db`` callable on ``ToolContext`` returns a context manager yielding
+# a ``Connection`` so plugin code can do:
+#
+#     with ctx.plugin_db() as conn:
+#         conn.execute(text("INSERT INTO plugin_foo_items ..."), {...})
+#
+# This replaces the legacy pattern of calling ``get_db()`` and operating on a
+# raw ``sqlite3.Connection``.
+
+
+def make_plugin_db():
+    """Return a context manager that opens a transactional engine connection."""
+    from db.engine import get_engine
+    return get_engine().begin()
+
+
 @dataclasses.dataclass
 class ToolContext:
     """Context passed to a tool executor.
@@ -59,8 +79,8 @@ class ToolContext:
         handler: The ``AgentHandler`` instance, exposes tag_registry, model, etc.
         tag_registry: Convenience pointer to ``handler.tag_registry``.
         plugin_id: Plugin id if the tool comes from a plugin, ``None`` for core.
-        plugin_db: Optional callable returning a DB connection scoped to the
-            plugin (used to access tables prefixed with ``plugin_<id>_``).
+        plugin_db: Optional callable returning a transactional ``Connection``
+            context manager scoped to the shared engine.
     """
 
     contact: "ContactMemory"

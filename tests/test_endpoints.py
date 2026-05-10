@@ -8,7 +8,6 @@ import io
 import json
 import logging
 import os
-import sqlite3
 import sys
 import tempfile
 import time
@@ -19,15 +18,23 @@ from unittest.mock import MagicMock, patch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Initialize SQLite in a temp directory before importing anything else
+# Initialize the engine in a temp directory before importing anything else.
+# Default: SQLite. Override with ``WHATSBOT_TEST_DB_URL`` to run the same
+# assertions against Postgres (e.g. via testcontainers).
 _tmpdir = tempfile.mkdtemp(prefix="whatsbot_test_")
 _db_path = Path(_tmpdir) / "whatsbot.db"
 
-from db import init_db
-init_db(_db_path)
+from db import init_db, init_engine
+
+_test_url = os.environ.get("WHATSBOT_TEST_DB_URL", "").strip()
+if _test_url:
+    init_engine(_test_url)
+    from db.connection import _run_alembic_upgrade  # noqa: E402
+    _run_alembic_upgrade()
+else:
+    init_db(_db_path)
 
 # Seed some test data
-from db.connection import get_db
 from db.repositories import contact_repo, message_repo, usage_repo, tag_repo, config_repo
 
 def _seed_data():

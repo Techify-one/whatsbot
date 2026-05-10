@@ -9,6 +9,11 @@ Each plugin can ship a ``migrations/`` folder with files named
    table whose name starts with ``plugin_<id>_`` — guards against accidental
    collisions with core tables.
 4. Executes the SQL inside a transaction and records the migration.
+
+Plugin migration files must contain **portable** SQL (no ``strftime``,
+``INSERT OR REPLACE``, ``RETURNING`` etc). The runner splits the file on
+``;`` boundaries and executes each statement individually so the same file
+runs against both SQLite and Postgres.
 """
 
 from __future__ import annotations
@@ -17,7 +22,9 @@ import logging
 import re
 from pathlib import Path
 
-from db.connection import get_db
+from sqlalchemy import text as sa_text
+
+from db.engine import get_engine
 from db.repositories import plugin_repo
 
 from plugins.manifest import PluginManifest
@@ -60,15 +67,16 @@ def run_pending_migrations(manifest: PluginManifest, plugin_dir: Path) -> list[i
     pending.sort()
 
     applied_now: list[int] = []
-    conn = get_db()
+    engine = get_engine()
     for version, path in pending:
         sql = path.read_text(encoding="utf-8")
         _validate_sql_prefix(sql, pid, table_prefix, path.name)
         try:
-            conn.executescript(sql)
-            conn.commit()
+            with engine.begin() as conn:
+                for stmt in _split_statements(sql):
+                    if stmt.strip():
+                        conn.execute(sa_text(stmt))
         except Exception as e:
-            conn.rollback()
             raise RuntimeError(
                 f"Plugin {pid} migration {path.name} failed: {e}"
             ) from e
@@ -79,9 +87,38 @@ def run_pending_migrations(manifest: PluginManifest, plugin_dir: Path) -> list[i
     return applied_now
 
 
+def _split_statements(sql: str) -> list[str]:
+    """Split a SQL script into individual statements on ``;`` boundaries.
+
+    Naive splitter that respects only single-quoted strings — adequate for the
+    DDL/DML that plugin migrations are expected to contain. Plugins requiring
+    more exotic SQL should split the work across multiple files.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    in_squote = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'" and not (in_squote and i + 1 < len(sql) and sql[i + 1] == "'"):
+            in_squote = not in_squote
+            buf.append(ch)
+        elif ch == ";" and not in_squote:
+            stmt = "".join(buf).strip()
+            if stmt:
+                out.append(stmt)
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
 def _validate_sql_prefix(sql: str, plugin_id: str, prefix: str, filename: str) -> None:
     """Ensure every CREATE/ALTER/DROP TABLE in ``sql`` uses ``prefix``."""
-    # Strip line comments so they don't trip the regex.
     cleaned = re.sub(r"--[^\n]*", "", sql)
     cleaned = re.sub(r"/\*.*?\*/", "", cleaned, flags=re.DOTALL)
     for match in _TABLE_OP_RE.finditer(cleaned):

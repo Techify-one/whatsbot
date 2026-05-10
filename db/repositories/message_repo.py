@@ -1,8 +1,13 @@
 """Repository for messages table."""
 
+from __future__ import annotations
+
 import time
 
-from db.connection import get_db
+from sqlalchemy import and_, delete as sa_delete, insert as sa_insert, select, update as sa_update
+
+from db.engine import get_engine
+from db.tables import messages
 
 
 def add(contact_id: int, role: str, content: str, *,
@@ -10,16 +15,21 @@ def add(contact_id: int, role: str, content: str, *,
         status: str | None = None, msg_id: str | None = None,
         ts: float | None = None) -> dict:
     """Insert a message and return it as a dict."""
-    conn = get_db()
     ts = ts or time.time()
-    cur = conn.execute(
-        """INSERT INTO messages (contact_id, role, content, ts, media_type, media_path, status, msg_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (contact_id, role, content, ts, media_type, media_path, status, msg_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        result = conn.execute(sa_insert(messages).values(
+            contact_id=contact_id,
+            role=role,
+            content=content,
+            ts=ts,
+            media_type=media_type,
+            media_path=media_path,
+            status=status,
+            msg_id=msg_id,
+        ))
+        new_id = result.inserted_primary_key[0]
     return {
-        "id": cur.lastrowid,
+        "id": new_id,
         "role": role,
         "content": content,
         "ts": ts,
@@ -32,165 +42,160 @@ def add(contact_id: int, role: str, content: str, *,
 
 def get_all(contact_id: int) -> list[dict]:
     """Return all messages for a contact ordered by timestamp."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM messages WHERE contact_id = ? ORDER BY ts",
-        (contact_id,),
-    ).fetchall()
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(messages)
+            .where(messages.c.contact_id == contact_id)
+            .order_by(messages.c.ts)
+        ).mappings().all()
     return [_row_to_dict(r) for r in rows]
 
 
 def get_context(contact_id: int, limit: int) -> list[dict]:
-    """Return the last N eligible messages for LLM context.
-
-    Excludes transcription, tool_call, system_notice, and failed messages.
-    """
-    conn = get_db()
-    rows = conn.execute(
-        """SELECT * FROM messages
-           WHERE contact_id = ?
-             AND role NOT IN ('transcription', 'tool_call', 'system_notice')
-             AND (status IS NULL OR status != 'failed')
-           ORDER BY ts DESC
-           LIMIT ?""",
-        (contact_id, limit),
-    ).fetchall()
-    # Reverse to get chronological order
+    """Return the last N eligible messages for LLM context."""
+    excluded = ("transcription", "tool_call", "system_notice")
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(messages)
+            .where(
+                (messages.c.contact_id == contact_id)
+                & (~messages.c.role.in_(excluded))
+                & ((messages.c.status.is_(None)) | (messages.c.status != "failed"))
+            )
+            .order_by(messages.c.ts.desc())
+            .limit(limit)
+        ).mappings().all()
     return [_row_to_dict(r) for r in reversed(rows)]
 
 
 def get_last(contact_id: int) -> dict | None:
     """Return the most recent message for a contact."""
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM messages WHERE contact_id = ? ORDER BY ts DESC LIMIT 1",
-        (contact_id,),
-    ).fetchone()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(messages)
+            .where(messages.c.contact_id == contact_id)
+            .order_by(messages.c.ts.desc())
+            .limit(1)
+        ).mappings().first()
     return _row_to_dict(row) if row else None
 
 
 def get_last_user_message(contact_id: int) -> dict | None:
     """Return the most recent user message (for updating with transcription etc)."""
-    conn = get_db()
-    row = conn.execute(
-        """SELECT * FROM messages
-           WHERE contact_id = ? AND role = 'user'
-           ORDER BY ts DESC LIMIT 1""",
-        (contact_id,),
-    ).fetchone()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(messages)
+            .where((messages.c.contact_id == contact_id) & (messages.c.role == "user"))
+            .order_by(messages.c.ts.desc())
+            .limit(1)
+        ).mappings().first()
     return _row_to_dict(row) if row else None
 
 
 def update_content(message_id: int, content: str) -> None:
     """Update the content of a specific message."""
-    conn = get_db()
-    conn.execute("UPDATE messages SET content = ? WHERE id = ?", (content, message_id))
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(messages).where(messages.c.id == message_id).values(content=content))
 
 
 def update_status(contact_id: int, content: str, new_status: str | None,
                    msg_id: str | None = None) -> None:
     """Update status of the most recent message matching content (for retry-send)."""
-    conn = get_db()
-    row = conn.execute(
-        """SELECT id FROM messages
-           WHERE contact_id = ? AND content = ? AND status = 'failed'
-           ORDER BY ts DESC LIMIT 1""",
-        (contact_id, content),
-    ).fetchone()
-    if row:
+    with get_engine().begin() as conn:
+        target_id = conn.execute(
+            select(messages.c.id)
+            .where(
+                (messages.c.contact_id == contact_id)
+                & (messages.c.content == content)
+                & (messages.c.status == "failed")
+            )
+            .order_by(messages.c.ts.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if target_id is None:
+            return
+        values = {"status": new_status}
         if msg_id:
-            conn.execute(
-                "UPDATE messages SET status = ?, msg_id = ? WHERE id = ?",
-                (new_status, msg_id, row["id"]),
-            )
-        else:
-            conn.execute(
-                "UPDATE messages SET status = ? WHERE id = ?",
-                (new_status, row["id"]),
-            )
-        conn.commit()
+            values["msg_id"] = msg_id
+        conn.execute(sa_update(messages).where(messages.c.id == target_id).values(**values))
 
 
 def update_status_by_msg_id(msg_id: str, new_status: str) -> list[str]:
     """Update delivery status by GOWA msg_id. Forward-only: sent → delivered → read.
 
-    Does not overwrite 'operator' or 'failed' statuses.
-    Also cascades the status to all prior outgoing messages for the same contact,
-    because if message N was delivered/read, all earlier messages were too.
-
-    Returns the list of ALL msg_ids that were updated (including cascaded ones),
-    so the caller can broadcast them to the frontend.
+    Does not overwrite 'operator' or 'failed' statuses. Cascades to all prior
+    outgoing messages for the same contact (delivered/read are monotonic).
     """
-    conn = get_db()
-    updated_msg_ids = []
-
-    # Update the specific message
-    cur = conn.execute(
-        """UPDATE messages SET status = ?
-           WHERE msg_id = ?
-             AND status IS NOT NULL
-             AND status IN ('sent', 'delivered')""",
-        (new_status, msg_id),
-    )
-    if cur.rowcount > 0:
-        updated_msg_ids.append(msg_id)
-
-    # Cascade: find and update all prior outgoing messages with a lesser status
-    row = conn.execute(
-        "SELECT contact_id, ts FROM messages WHERE msg_id = ?",
-        (msg_id,),
-    ).fetchone()
-    if row:
-        prior_statuses = ('sent',) if new_status == 'delivered' else ('sent', 'delivered')
-        placeholders = ','.join('?' for _ in prior_statuses)
-        # Find msg_ids of prior messages that will be cascaded
-        prior_rows = conn.execute(
-            f"""SELECT msg_id FROM messages
-                WHERE contact_id = ? AND role = 'assistant'
-                  AND ts <= ? AND status IN ({placeholders})
-                  AND msg_id IS NOT NULL AND msg_id != ?""",
-            (row["contact_id"], row["ts"], *prior_statuses, msg_id),
-        ).fetchall()
-        cascaded_ids = [r["msg_id"] for r in prior_rows]
-        if cascaded_ids:
-            conn.execute(
-                f"""UPDATE messages SET status = ?
-                    WHERE contact_id = ? AND role = 'assistant'
-                      AND ts <= ? AND status IN ({placeholders})""",
-                (new_status, row["contact_id"], row["ts"], *prior_statuses),
+    updated_msg_ids: list[str] = []
+    with get_engine().begin() as conn:
+        # Update the specific message.
+        result = conn.execute(
+            sa_update(messages)
+            .where(
+                (messages.c.msg_id == msg_id)
+                & (messages.c.status.is_not(None))
+                & (messages.c.status.in_(("sent", "delivered")))
             )
-            updated_msg_ids.extend(cascaded_ids)
+            .values(status=new_status)
+        )
+        if (result.rowcount or 0) > 0:
+            updated_msg_ids.append(msg_id)
 
-    conn.commit()
+        # Find the anchor row to drive the cascade.
+        anchor = conn.execute(
+            select(messages.c.contact_id, messages.c.ts).where(messages.c.msg_id == msg_id)
+        ).first()
+        if anchor:
+            prior_statuses = ("sent",) if new_status == "delivered" else ("sent", "delivered")
+            # Gather IDs first so we can return them to the caller.
+            prior_rows = conn.execute(
+                select(messages.c.msg_id)
+                .where(
+                    (messages.c.contact_id == anchor.contact_id)
+                    & (messages.c.role == "assistant")
+                    & (messages.c.ts <= anchor.ts)
+                    & (messages.c.status.in_(prior_statuses))
+                    & (messages.c.msg_id.is_not(None))
+                    & (messages.c.msg_id != msg_id)
+                )
+            ).all()
+            cascaded = [r.msg_id for r in prior_rows]
+            if cascaded:
+                conn.execute(
+                    sa_update(messages)
+                    .where(
+                        (messages.c.contact_id == anchor.contact_id)
+                        & (messages.c.role == "assistant")
+                        & (messages.c.ts <= anchor.ts)
+                        & (messages.c.status.in_(prior_statuses))
+                    )
+                    .values(status=new_status)
+                )
+                updated_msg_ids.extend(cascaded)
     return updated_msg_ids
 
 
 def get_contact_id_by_msg_id(msg_id: str) -> int | None:
     """Look up the contact_id for a given GOWA msg_id."""
-    conn = get_db()
-    row = conn.execute(
-        "SELECT contact_id FROM messages WHERE msg_id = ? LIMIT 1",
-        (msg_id,),
-    ).fetchone()
-    return row["contact_id"] if row else None
+    with get_engine().connect() as conn:
+        cid = conn.execute(
+            select(messages.c.contact_id).where(messages.c.msg_id == msg_id).limit(1)
+        ).scalar_one_or_none()
+    return cid
 
 
 def update_msg_id_and_status(message_id: int, msg_id: str, status: str) -> None:
     """Set msg_id and status on a message (used after retry-send)."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE messages SET msg_id = ?, status = ? WHERE id = ?",
-        (msg_id, status, message_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(
+            sa_update(messages).where(messages.c.id == message_id).values(msg_id=msg_id, status=status)
+        )
 
 
 def delete_all(contact_id: int) -> None:
     """Delete all messages for a contact."""
-    conn = get_db()
-    conn.execute("DELETE FROM messages WHERE contact_id = ?", (contact_id,))
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_delete(messages).where(messages.c.contact_id == contact_id))
 
 
 def _row_to_dict(row) -> dict:
@@ -205,6 +210,5 @@ def _row_to_dict(row) -> dict:
         d["media_type"] = row["media_type"]
     if row["media_path"]:
         d["media_path"] = row["media_path"]
-    # Include DB id for internal use (update_content etc)
     d["_id"] = row["id"]
     return d

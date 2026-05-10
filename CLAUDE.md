@@ -5,7 +5,9 @@ Bot de WhatsApp com IA para usuários finais, distribuído como EXE Windows.
 ## Stack
 
 - **Python 3.11+** — linguagem principal
-- **SQLite** — banco de dados local (WAL mode, stdlib `sqlite3`)
+- **SQLAlchemy 2.0 Core + Alembic** — camada de dados portável (Core, sem ORM declarativo)
+- **SQLite** — banco default (WAL mode, driver `sqlite3` da stdlib)
+- **PostgreSQL** — backend opcional via `psycopg[binary]`, configurável pela tela Settings → Banco
 - **GOWA** (go-whatsapp-web-multidevice v8.5.0) — bridge WhatsApp via REST, roda como subprocess
 - **OpenRouter** — LLM provider (API compatível com OpenAI)
 - **FastAPI + uvicorn** — backend web (REST API + WebSocket)
@@ -23,10 +25,14 @@ agent/handler.py     → processa mensagens com LLM via OpenRouter (tool calling
 agent/memory.py      → ContactMemory e TagRegistry (leitura/escrita no SQLite via repos)
 agent/tools/         → tools core do LLM (uma tool por arquivo, agregadas em CORE_TOOLS)
 config/settings.py   → load/save config na tabela `config` do SQLite
-db/                  → módulo de banco de dados
-  connection.py      → thread-local connection pool, init_db(), PRAGMAs
-  schema.sql         → CREATE TABLE statements (11 tabelas, incluindo plugins)
-  migrate_json.py    → migração one-time de JSON legado → SQLite
+db/                  → módulo de banco de dados (SQLAlchemy 2.0 Core)
+  engine.py          → factory do Engine, URL resolution (env > arquivo > sqlite default), PRAGMAs SQLite
+  tables.py          → MetaData + 11 Table objects (Core, sem mapper/Session)
+  upsert.py          → helper dialect-agnóstico (INSERT ... ON CONFLICT)
+  connection.py      → init_db(): cria engine + roda Alembic upgrade
+  migration_postgres.py → migra dados SQLite → Postgres (usado pelo endpoint admin)
+  migrate_json.py    → migração one-time de JSON legado → banco
+  alembic/           → migrations Alembic (env.py + versions/)
   repositories/      → data access layer (um arquivo por domínio)
     config_repo.py   → get_all(), get(), set(), set_many(), delete_prefix()
     contact_repo.py  → get_or_create(), update(), list_contacts(), get_full_contact()
@@ -65,7 +71,19 @@ python main.py
 
 ## Banco de dados
 
-Todos os dados persistentes ficam em um único arquivo SQLite: `storages/whatsbot.db`. O banco é criado automaticamente na primeira execução via `db/schema.sql`.
+A camada de dados usa **SQLAlchemy 2.0 Core** (sem ORM declarativo). Cada tabela é um `Table` em [db/tables.py](db/tables.py) e os repositórios constroem statements via `select()/insert()/update()/delete()`. Repos rodam síncronos e são chamados das rotas via `asyncio.to_thread`.
+
+### Escolha do backend
+
+A URL é resolvida na ordem:
+
+1. Variável de ambiente `DATABASE_URL` (cobre Docker/Coolify — `.env`).
+2. Arquivo local `storages/database.json` (Windows / EXE — gerenciado pela UI).
+3. Fallback: `sqlite:///storages/whatsbot.db`.
+
+Para trocar para Postgres no Windows: Settings → Banco → cola a URL `postgresql+psycopg://user:senha@host:5432/whatsbot` → "Migrar agora". O endpoint `POST /api/admin/migrate-to-postgres` recebe a URL, valida que o destino está vazio, aplica Alembic, copia tabela a tabela (incluindo `plugin_*`), grava em `database.json` e dispara restart. SQLite original fica preservado para rollback (basta apagar/editar `database.json` e reiniciar).
+
+Para Docker: setar `DATABASE_URL` no `.env` antes de subir o container — o arquivo `database.json` é ignorado quando a env está presente.
 
 ### Tabelas
 
@@ -86,16 +104,43 @@ Todos os dados persistentes ficam em um único arquivo SQLite: `storages/whatsbo
 | `plugin_<id>_*` | Tabelas criadas por plugins via suas migrations (prefixo obrigatório) |
 | `tool_overrides` | Override por-tool (enabled, description, display_label). Row criada automaticamente para cada tool registrada (core + plugin) |
 
-### Configuração do SQLite
+### Configuração SQLite
+
+Quando o engine é SQLite (default), as PRAGMAs são aplicadas via `event.listens_for("connect")` em [db/engine.py](db/engine.py):
 
 - `PRAGMA journal_mode=WAL` — permite leituras concorrentes
 - `PRAGMA foreign_keys=ON` — integridade referencial
 - `PRAGMA busy_timeout=5000` — espera até 5s em lock contention
-- Thread-local connections via `threading.local()` para compatibilidade com `asyncio.to_thread()`
+- `connect_args={"check_same_thread": False}` — reuso entre threads compatível com `asyncio.to_thread`
+
+Em Postgres essas pragmas não se aplicam (são SQLite-only); o engine usa `pool_pre_ping=True` para sobreviver a quedas idle de conexão.
 
 ### Padrão de acesso
 
-Todas as operações de banco usam o padrão **repository** (`db/repositories/`). Nunca acessar `sqlite3` diretamente fora dos repos. As rotas FastAPI chamam repos via `asyncio.to_thread()`.
+Repos usam o padrão dialect-agnóstico baseado em `Table` objects:
+
+```python
+from sqlalchemy import select
+from db.engine import get_engine
+from db.tables import contacts
+
+def get_by_phone(phone: str) -> dict | None:
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(contacts).where(contacts.c.phone == phone)
+        ).mappings().first()
+    return dict(row) if row else None
+```
+
+Regras:
+
+- Leitura: `with get_engine().connect() as conn:` (sem transação implícita).
+- Escrita: `with get_engine().begin() as conn:` (auto-commit no exit, rollback em exceção).
+- UPSERT: usar `db.upsert.upsert()` / `db.upsert.upsert_ignore()` — escolhe `sqlite.insert()` ou `postgresql.insert()` automaticamente.
+- Nunca usar `?` ou `%s` direto — bind params nomeados (`:phone`) via `sqlalchemy.text()` ou expressões Core.
+- Migrations: Alembic ([db/alembic/versions](db/alembic/versions)). Para um schema change, rode `alembic revision --autogenerate -m "msg"` e revise. `init_db()` aplica `alembic upgrade head` no boot; DBs legados sem `alembic_version` são automaticamente stampados em `0001_baseline` antes do upgrade.
+
+`db.connection.get_db()` ainda existe como shim deprecated retornando `engine.raw_connection()`, mas é apenas para plugins de terceiros não migrados. Código novo (core ou plugin oficial) usa `get_engine()`.
 
 ## Fluxo de mensagens (webhook)
 
@@ -152,6 +197,9 @@ Info é salva automaticamente via tool calling do LLM e injetada no system promp
 | DELETE | `/api/plugins/{id}` | Remove a pasta + tabelas `plugin_<id>_*` + settings namespaceadas |
 | POST | `/api/plugins/restart` | Restart manual do servidor |
 | `*` | `/api/plugins/{id}/*` | Endpoints REST mountados pelo plugin (router próprio) |
+| GET | `/api/admin/database` | Info do backend atual (dialect, URL redacted, caminho do config) |
+| POST | `/api/admin/migrate-to-postgres` | Inicia migração SQLite → Postgres. Body: `{postgres_url}`. Status via WS `db_migration_progress` |
+| GET | `/api/admin/migrate-to-postgres/status` | Snapshot polling do estado da migração |
 | WS | `/ws` | WebSocket para eventos real-time |
 
 Formato de resposta REST: `{"ok": bool, "data": ..., "error": ...}`
@@ -189,12 +237,13 @@ Campos do payload do webhook GOWA: `body`, `from`, `sender_jid`, `chat_id`, `id`
 - **Tools do LLM (core)**: criar em `agent/tools/<name>.py` com (a) o schema dict (`<NAME>_TOOL = {"type": "function", ...}`) e (b) função `execute(ctx, args) -> str | None`. Adicionar a tupla `(SCHEMA, execute)` em `CORE_TOOLS` em `agent/tools/__init__.py`. O dispatch é genérico via registry em `AgentHandler` — nunca adicionar `if/elif` por nome de tool
 - **Tools de plugin**: viver em `storages/plugins/<id>/tools.py` no formato `CORE_TOOLS = [(schema, executor), ...]` e ser declaradas no manifest. NÃO mexer em `agent/tools/` ou no handler
 - **Contrato de tool (core OU plugin)**: toda tool registrada vira row em `tool_overrides` automaticamente (via `tool_override_repo.ensure` no `_register_tool`). O usuário pode customizar `description` e `display_label` na tela `/tools`. O `name` da tool é IDENTIDADE e NÃO deve ser renomeado depois de release — quebra histórico de `usage` (`call_type=<name>`) e overrides do usuário. Description em código é o **default**: escreva como instrução clara pro LLM, deve funcionar sem customização. O schema também aceita `"display_label": "..."` no dict raiz (fora de `function`) — o handler retira antes de mandar pro LLM, e o valor vira o default mostrado na UI
-- **Acesso a dados**: sempre via repositórios em `db/repositories/`. Nunca usar `sqlite3` diretamente fora do módulo `db/` ou da pasta de um plugin
+- **Acesso a dados**: sempre via SQLAlchemy Core. Repos em `db/repositories/` usam `with get_engine().begin() as conn:` + statements de `db/tables`. Nunca usar `sqlite3` diretamente. Plugins acessam o banco via `from plugins.context import make_plugin_db` + `from sqlalchemy import text`
 
 ## Dados do projeto
 
 Tudo salvo na pasta raiz do projeto (dev) ou junto ao EXE (PyInstaller):
-- `storages/whatsbot.db` — banco de dados SQLite (configs, contatos, mensagens, usage, tags)
+- `storages/whatsbot.db` — banco SQLite (default; configs, contatos, mensagens, usage, tags)
+- `storages/database.json` — override do backend (`{"url": "postgresql+psycopg://..."}`); ausente = SQLite
 - `storages/` — dados do GOWA (sessão WhatsApp) + banco de dados da aplicação
 - `logs/` — logs com rotação
 - `statics/senditems/` — mídia enviada pelo operador
@@ -277,7 +326,7 @@ source venv/Scripts/activate
 python tests/test_endpoints.py
 ```
 
-Os testes criam um banco temporário, inserem dados de teste (contatos, mensagens, tags, usage), e validam 122 assertions cobrindo:
+Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_DB_URL=postgresql+psycopg://...` para rodar contra Postgres), inserem dados de teste (contatos, mensagens, tags, usage), e validam 129 assertions cobrindo:
 - Health, Auth (com e sem senha), Config (GET/PUT/test-key), Status
 - Contacts (list, detail, search, archived, send, retry, image, audio, presence, read, toggle-ai, update info)
 - Tags (CRUD + contact tags)
@@ -348,7 +397,7 @@ python -c "import uvicorn; from server.dev import app; uvicorn.run(app, host='12
 - **Debug do subprocess GOWA**: por padrão o stdout/stderr do GOWA vão para `DEVNULL` (sem custo). Para diagnosticar mensagens descartadas (payloads vazios, tipos não decodificados, templates HSM da Cloud API, etc.), setar a env `WHATSBOT_GOWA_DEBUG=1` (no Coolify ou outro ambiente) e reiniciar o container. Com a flag ativa, o GOWA é iniciado com `--debug=true` e os logs são gravados em `logs/gowa.log` (truncado quando passa de ~10 MB). Acessível via `GET /api/gowa-logs?limit=N` (default 500, max 5000). A resposta inclui `debug_enabled`, `log_path`, `size` e `lines[]`. Desligar setando `WHATSBOT_GOWA_DEBUG=0` ou removendo a variável + reiniciando
 - **Mensagens HSM via Cloud API (linked device limitation)**: contas Business via WhatsApp Cloud API enviam mensagens template (`<hsm tag="..."/>`, ex: Mercado Livre, OTP, notificações). Por design do WhatsApp, esses templates **não são entregues com conteúdo para linked devices** — só para o device primário. O GOWA recebe um `placeholderMessage` com `type: MASK_LINKED_DEVICES` (sem body/media), e o webhook chega só com metadata (`chat_id`, `from`, `id`, `timestamp`). Não é bug — é limitação estrutural. Para confirmar, ativar `WHATSBOT_GOWA_DEBUG=1` e procurar `placeholderMessage` ou `<hsm tag=` em `/api/gowa-logs`
 - **SQLite WAL files**: `whatsbot.db-wal` e `whatsbot.db-shm` são criados automaticamente pelo SQLite no modo WAL. Não deletar enquanto o servidor estiver rodando. São limpos automaticamente quando todas as conexões fecham
-- **Auto-criação do banco**: se `storages/whatsbot.db` não existir, é criado automaticamente na inicialização com o schema completo
+- **Auto-criação do banco**: na inicialização, `init_db()` resolve a URL (env > `storages/database.json` > sqlite default), cria o engine e roda `alembic upgrade head`. SQLite vazio é criado do zero; DBs SQLite legados (sem `alembic_version`) são automaticamente stampados no baseline antes do upgrade — não há recriação destrutiva
 - **Bootstrap de plugins**: os plugins de referência vivem em `assets/plugin_examples/<id>/` (trackeados no git) e são copiados para `storages/plugins/<id>/` apenas na 1ª execução, quando `storages/plugins/` está vazio. Atualizar o core nunca sobrescreve plugins do usuário. Se o usuário deletar um plugin de referência pela UI, ele NÃO volta no próximo boot — a flag de "primeira execução" é "tem alguma subpasta?". Hoje o único bundled é `lembretes`.
 - **Restart de plugin requer supervisor**: `enable`/`disable` chama `os._exit(0)` após um delay curto. Em Docker, `restart: unless-stopped` (compose) faz o container relançar; em dev, `restart.py` toca `server/_reload_trigger.py` (`.py` dentro de um `--reload-dir`, casa com o include default `*.py` do uvicorn) — o watchfiles reinicia o worker antes do `os._exit` rodar. O arquivo é regenerado em runtime e está no `.gitignore`. Em EXE Windows, o `update.py` relança. Sem supervisor, o servidor cai e não volta sozinho.
 - **Prefixo de tabela enforced**: o migrator usa regex em `CREATE TABLE`/`ALTER TABLE`/`CREATE INDEX`/`DROP TABLE`/`DROP INDEX` e RECUSA migration que tente criar objeto fora do prefixo `plugin_<id>_`. Erro mostra qual nome violou. Usar comentários SQL `--` ou `/* */` é OK; o migrator os strip-a antes da validação.

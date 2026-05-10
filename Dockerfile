@@ -34,7 +34,7 @@ COPY db/ db/
 COPY plugins/ plugins/
 COPY server/ server/
 COPY web/ web/
-COPY main.py .
+COPY main.py alembic.ini ./
 
 # Create bin/gowa symlink so gowa/manager.py finds the binary at expected path
 RUN mkdir -p bin && ln -s /usr/local/bin/gowa bin/gowa

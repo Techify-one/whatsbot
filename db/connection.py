@@ -1,54 +1,121 @@
-"""SQLite connection management with thread-local storage."""
+"""Database bootstrap.
+
+This module is the entry point used by the rest of the app. It keeps the
+historical ``init_db(db_path)`` signature so callers (``main.py``,
+``server/dev.py``, tests) do not need to change, but internally it now:
+
+* resolves the SQLAlchemy URL (env > file > sqlite default),
+* creates the module-level engine via ``db.engine.init_engine``,
+* runs every pending Alembic migration up to ``head``.
+
+Direct ``sqlite3`` access is gone. Repositories use ``db.engine.get_engine()``
+plus ``with engine.begin() as conn:`` for explicit transactions. The legacy
+``get_db()`` symbol is preserved only as a temporary shim for third-party
+plugins that have not migrated to the new API.
+"""
+
+from __future__ import annotations
 
 import logging
-import sqlite3
-import threading
 from pathlib import Path
+from typing import Optional
+
+from sqlalchemy import inspect
+
+from db.engine import (
+    get_engine,
+    init_engine,
+    resolve_database_url,
+)
 
 logger = logging.getLogger(__name__)
 
-_db_path: Path | None = None
-_local = threading.local()
-_SCHEMA_FILE = Path(__file__).parent / "schema.sql"
+
+# ── Public bootstrap API ──────────────────────────────────────────────────
+
+def init_db(db_path: Optional[Path] = None, *, storages_dir: Optional[Path] = None) -> None:
+    """Initialize the engine and bring the schema up to date.
+
+    Resolution order:
+        - ``db_path`` (legacy): force SQLite at the given file path.
+        - ``storages_dir``: apply ENV > ``database.json`` > sqlite default.
+        - Neither: use ``./storages`` relative to CWD.
+    """
+    if db_path is not None:
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        url = f"sqlite:///{db_path}"
+    else:
+        if storages_dir is None:
+            storages_dir = Path("storages").resolve()
+        storages_dir.mkdir(parents=True, exist_ok=True)
+        url = resolve_database_url(storages_dir)
+
+    init_engine(url)
+    _run_alembic_upgrade()
+    logger.info("Database ready (%s)", _describe_url(url))
 
 
-def init_db(db_path: Path) -> None:
-    """Initialize the database: set path and create tables."""
-    global _db_path
-    _db_path = db_path
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = get_db()
-    conn.executescript(_SCHEMA_FILE.read_text(encoding="utf-8"))
-    conn.commit()
-    _run_migrations(conn)
-    logger.info("Database initialized at %s", db_path)
+def _describe_url(url: str) -> str:
+    """Return a redacted URL for logs (strip user:password)."""
+    if "@" in url and "://" in url:
+        scheme, rest = url.split("://", 1)
+        creds, host_part = rest.split("@", 1)
+        return f"{scheme}://***@{host_part}"
+    return url
 
 
-def _run_migrations(conn: sqlite3.Connection) -> None:
-    """Apply incremental schema migrations for existing databases."""
-    # Migration: add archived_by_app column to contacts
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()}
-    if "archived_by_app" not in cols:
-        conn.execute("ALTER TABLE contacts ADD COLUMN archived_by_app INTEGER NOT NULL DEFAULT 0")
-        conn.commit()
-        logger.info("Migration: added archived_by_app column to contacts")
+def _run_alembic_upgrade() -> None:
+    """Bring the bound database to the latest Alembic revision.
 
-    if "can_send" not in cols:
-        conn.execute("ALTER TABLE contacts ADD COLUMN can_send INTEGER NOT NULL DEFAULT 1")
-        conn.commit()
-        logger.info("Migration: added can_send column to contacts")
+    For brand-new databases the baseline revision creates every table. For
+    pre-existing SQLite databases created by the legacy ``executescript`` path,
+    Alembic stamps the baseline before applying any subsequent revisions, so we
+    never try to re-create existing tables.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    engine = get_engine()
+    project_root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(project_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(project_root / "db" / "alembic"))
+    # Pass the engine URL explicitly so the alembic env.py picks the same DB.
+    cfg.set_main_option("sqlalchemy.url", str(engine.url).replace("%", "%%"))
+
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    has_alembic = "alembic_version" in existing
+    has_legacy_tables = "contacts" in existing or "config" in existing
+
+    if not has_alembic and has_legacy_tables:
+        logger.info("Stamping pre-existing schema as Alembic baseline")
+        command.stamp(cfg, "0001_baseline")
+
+    command.upgrade(cfg, "head")
 
 
-def get_db() -> sqlite3.Connection:
-    """Return a thread-local SQLite connection (created on first access)."""
-    if _db_path is None:
-        raise RuntimeError("Database not initialized. Call init_db() first.")
-    conn = getattr(_local, "conn", None)
-    if conn is None:
-        conn = sqlite3.connect(str(_db_path), check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.row_factory = sqlite3.Row
-        _local.conn = conn
-    return conn
+# ── Legacy shim ───────────────────────────────────────────────────────────
+
+def get_db():
+    """Deprecated shim. Returns a DB-API connection from the engine pool.
+
+    The historical contract was a thread-local ``sqlite3.Connection`` reused
+    across calls. The new contract is "open one connection per logical unit of
+    work using ``with engine.begin() as conn:``" — see the repositories for the
+    canonical pattern.
+
+    For Postgres the returned object is a ``psycopg.Connection``, which speaks
+    enough DB-API for callers that only run plain SQL with ``?``-style params
+    *will break* (psycopg uses ``%s``). New code MUST use the SA engine; this
+    shim is kept only so importing it doesn't crash on app boot.
+    """
+    import warnings
+
+    warnings.warn(
+        "db.connection.get_db() is deprecated — use db.engine.get_engine() "
+        "and `with engine.begin() as conn:` instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_engine().raw_connection()

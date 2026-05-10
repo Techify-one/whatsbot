@@ -15,6 +15,9 @@ services:
       - WHATSBOT_DOCKER=1
       - WHATSBOT_WEB_PORT=${WHATSBOT_WEB_PORT:-8080}
       - WHATSBOT_GOWA_PORT=${WHATSBOT_GOWA_PORT:-64999}
+      # Optional Postgres backend — unset = SQLite default in storages/whatsbot.db.
+      # Example: postgresql+psycopg://whatsbot:secret@db:5432/whatsbot
+      - DATABASE_URL=${DATABASE_URL:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

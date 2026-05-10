@@ -3,6 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import htm from 'htm';
 import { testApiKey, checkForUpdates, performUpdate } from '../services/api.js';
 import { ModelSelect } from './ModelSelect.js';
+import { DatabaseSettings } from './DatabaseSettings.js';
 
 const html = htm.bind(h);
 
@@ -577,6 +578,8 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           </div>
         </div>
       <//>
+
+      <${DatabaseSettings} onNotify=${onNotify} />
 
       <!-- Save Button (sticky) -->
       <div class="sticky bottom-0 z-10 bg-wa-panel pt-2 pb-1">

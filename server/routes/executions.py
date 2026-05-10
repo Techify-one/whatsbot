@@ -35,8 +35,5 @@ def register_routes(app, deps):
         """Delete executions older than N days."""
         import time
         cutoff = time.time() - (days * 86400)
-        from db.connection import get_db
-        conn = get_db()
-        cursor = conn.execute("DELETE FROM executions WHERE started_at < ?", (cutoff,))
-        conn.commit()
-        return _ok({"deleted": cursor.rowcount})
+        deleted = await asyncio.to_thread(execution_repo.delete_older_than, cutoff)
+        return _ok({"deleted": deleted})

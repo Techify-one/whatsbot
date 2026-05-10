@@ -10,30 +10,41 @@ sending ``description=null`` in the PUT — the repo ``upsert`` distinguishes
 "do not touch" from "set to NULL" via a sentinel.
 """
 
+from __future__ import annotations
+
 import time
 
-from db.connection import get_db
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
+
+from db.engine import get_engine
+from db.tables import tool_overrides
+from db.upsert import upsert as upsert_stmt
 
 
 _UNSET = object()
 
 
 def get(name: str) -> dict | None:
-    conn = get_db()
-    row = conn.execute(
-        "SELECT name, plugin_id, enabled, description, display_label, updated_at "
-        "FROM tool_overrides WHERE name = ?",
-        (name,),
-    ).fetchone()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(tool_overrides).where(tool_overrides.c.name == name)
+        ).mappings().first()
     return dict(row) if row else None
 
 
 def list_all() -> list[dict]:
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT name, plugin_id, enabled, description, display_label, updated_at "
-        "FROM tool_overrides ORDER BY plugin_id IS NOT NULL, plugin_id, name"
-    ).fetchall()
+    # Mirror the original ORDER BY: plugin tools (non-null plugin_id) sort after
+    # core tools, then by plugin_id, then by name.
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(tool_overrides).order_by(
+                (tool_overrides.c.plugin_id.is_not(None)),
+                tool_overrides.c.plugin_id,
+                tool_overrides.c.name,
+            )
+        ).mappings().all()
     return [dict(r) for r in rows]
 
 
@@ -44,18 +55,24 @@ def ensure(name: str, plugin_id: str | None) -> None:
     on conflict so a tool moving between core/plugin or between plugins ends up
     pointing at the current source.
     """
-    conn = get_db()
     now = time.time()
-    conn.execute(
-        "INSERT INTO tool_overrides (name, plugin_id, enabled, description, display_label, updated_at) "
-        "VALUES (?, ?, 1, NULL, NULL, ?) "
-        "ON CONFLICT(name) DO UPDATE SET plugin_id = excluded.plugin_id",
-        (name, plugin_id, now),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(upsert_stmt(
+            tool_overrides,
+            {
+                "name": name,
+                "plugin_id": plugin_id,
+                "enabled": 1,
+                "description": None,
+                "display_label": None,
+                "updated_at": now,
+            },
+            conflict_cols=["name"],
+            update_cols=["plugin_id"],
+        ))
 
 
-def upsert(
+def upsert_override(
     name: str,
     *,
     enabled=_UNSET,
@@ -74,32 +91,34 @@ def upsert(
     new_enabled = existing["enabled"] if enabled is _UNSET else (1 if enabled else 0)
     new_description = existing["description"] if description is _UNSET else description
     new_label = existing["display_label"] if display_label is _UNSET else display_label
-    conn = get_db()
-    conn.execute(
-        "UPDATE tool_overrides "
-        "SET enabled = ?, description = ?, display_label = ?, updated_at = ? "
-        "WHERE name = ?",
-        (new_enabled, new_description, new_label, time.time(), name),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(tool_overrides).where(tool_overrides.c.name == name).values(
+            enabled=new_enabled,
+            description=new_description,
+            display_label=new_label,
+            updated_at=time.time(),
+        ))
     return get(name)
+
+
+# Public name preserved.
+upsert = upsert_override  # type: ignore[assignment]
 
 
 def delete_for_plugin(plugin_id: str) -> int:
     """Remove all overrides belonging to a plugin. Used when plugin is deleted."""
-    conn = get_db()
-    cur = conn.execute("DELETE FROM tool_overrides WHERE plugin_id = ?", (plugin_id,))
-    conn.commit()
-    return cur.rowcount or 0
+    with get_engine().begin() as conn:
+        result = conn.execute(sa_delete(tool_overrides).where(
+            tool_overrides.c.plugin_id == plugin_id
+        ))
+    return result.rowcount or 0
 
 
 def delete_orphans(known_names: set[str]) -> int:
     """Remove rows for tools that are no longer registered (renamed/removed)."""
-    conn = get_db()
-    rows = conn.execute("SELECT name FROM tool_overrides").fetchall()
-    orphans = [r["name"] for r in rows if r["name"] not in known_names]
-    for n in orphans:
-        conn.execute("DELETE FROM tool_overrides WHERE name = ?", (n,))
-    if orphans:
-        conn.commit()
+    with get_engine().begin() as conn:
+        rows = conn.execute(select(tool_overrides.c.name)).all()
+        orphans = [r.name for r in rows if r.name not in known_names]
+        for name in orphans:
+            conn.execute(sa_delete(tool_overrides).where(tool_overrides.c.name == name))
     return len(orphans)

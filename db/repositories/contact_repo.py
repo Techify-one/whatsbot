@@ -1,8 +1,16 @@
 """Repository for contacts table."""
 
+from __future__ import annotations
+
 import time
 
-from db.connection import get_db
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import insert as sa_insert
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
+
+from db.engine import get_engine
+from db.tables import contact_tags, contacts, observations, tags, unread_msg_ids
 
 
 def _br_phone_variants(phone: str) -> list[str]:
@@ -24,28 +32,24 @@ def _br_phone_variants(phone: str) -> list[str]:
 
 
 def get_or_create(phone: str, default_ai_enabled: bool = True) -> dict:
-    """Get a contact by phone, creating it if it doesn't exist.
-
-    For Brazilian numbers, checks both 12-digit and 13-digit variants
-    to prevent duplicate contacts.
-    """
-    conn = get_db()
+    """Get a contact by phone, creating it if it doesn't exist."""
     variants = _br_phone_variants(phone)
-    placeholders = ",".join("?" for _ in variants)
-    row = conn.execute(
-        f"SELECT * FROM contacts WHERE phone IN ({placeholders})", variants
-    ).fetchone()
-    if row is not None:
-        return _row_to_dict(row)
-    now = time.time()
-    cur = conn.execute(
-        """INSERT INTO contacts (phone, ai_enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?)""",
-        (phone, 1 if default_ai_enabled else 0, now, now),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        row = conn.execute(
+            select(contacts).where(contacts.c.phone.in_(variants))
+        ).mappings().first()
+        if row is not None:
+            return _row_to_dict(row)
+        now = time.time()
+        result = conn.execute(sa_insert(contacts).values(
+            phone=phone,
+            ai_enabled=1 if default_ai_enabled else 0,
+            created_at=now,
+            updated_at=now,
+        ))
+        new_id = result.inserted_primary_key[0]
     return {
-        "id": cur.lastrowid,
+        "id": new_id,
         "phone": phone,
         "name": "",
         "email": "",
@@ -67,32 +71,28 @@ def get_or_create(phone: str, default_ai_enabled: bool = True) -> dict:
 
 def delete(contact_id: int) -> None:
     """Delete a contact and all related data (CASCADE handles child tables)."""
-    conn = get_db()
-    conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_delete(contacts).where(contacts.c.id == contact_id))
 
 
 def set_archived(contact_id: int, archived: bool, by_app: bool = False) -> None:
     """Set the archived status of a contact."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE contacts SET is_archived = ?, archived_by_app = ?, updated_at = ? WHERE id = ?",
-        (1 if archived else 0, 1 if (archived and by_app) else 0, time.time(), contact_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(
+            is_archived=1 if archived else 0,
+            archived_by_app=1 if (archived and by_app) else 0,
+            updated_at=time.time(),
+        ))
 
 
 def get_by_phone(phone: str) -> dict | None:
-    """Get a contact by phone number. Checks BR phone variants. Returns None if not found."""
-    conn = get_db()
+    """Get a contact by phone number. Checks BR phone variants."""
     variants = _br_phone_variants(phone)
-    placeholders = ",".join("?" for _ in variants)
-    row = conn.execute(
-        f"SELECT * FROM contacts WHERE phone IN ({placeholders})", variants
-    ).fetchone()
-    if row is None:
-        return None
-    return _row_to_dict(row)
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(contacts).where(contacts.c.phone.in_(variants))
+        ).mappings().first()
+    return _row_to_dict(row) if row else None
 
 
 def update(contact_id: int, **fields) -> None:
@@ -100,122 +100,109 @@ def update(contact_id: int, **fields) -> None:
     if not fields:
         return
     fields["updated_at"] = time.time()
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [contact_id]
-    conn = get_db()
-    conn.execute(f"UPDATE contacts SET {set_clause} WHERE id = ?", values)
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(**fields))
 
 
 def increment_unread(contact_id: int, msg_id: str | None = None) -> None:
     """Increment unread_count and optionally track the msg_id."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE contacts SET unread_count = unread_count + 1, updated_at = ? WHERE id = ?",
-        (time.time(), contact_id),
-    )
-    if msg_id:
-        conn.execute(
-            "INSERT INTO unread_msg_ids (contact_id, msg_id) VALUES (?, ?)",
-            (contact_id, msg_id),
-        )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(
+            unread_count=contacts.c.unread_count + 1,
+            updated_at=time.time(),
+        ))
+        if msg_id:
+            conn.execute(sa_insert(unread_msg_ids).values(
+                contact_id=contact_id, msg_id=msg_id,
+            ))
 
 
 def increment_unread_ai(contact_id: int) -> None:
     """Increment unread_ai_count."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE contacts SET unread_ai_count = unread_ai_count + 1, updated_at = ? WHERE id = ?",
-        (time.time(), contact_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(
+            unread_ai_count=contacts.c.unread_ai_count + 1,
+            updated_at=time.time(),
+        ))
 
 
 def mark_as_read(contact_id: int) -> list[str]:
     """Reset unread counts and return the unread msg_ids (for read receipts)."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT msg_id FROM unread_msg_ids WHERE contact_id = ?", (contact_id,)
-    ).fetchall()
-    msg_ids = [r["msg_id"] for r in rows]
-    conn.execute("DELETE FROM unread_msg_ids WHERE contact_id = ?", (contact_id,))
-    conn.execute(
-        "UPDATE contacts SET unread_count = 0, unread_ai_count = 0, updated_at = ? WHERE id = ?",
-        (time.time(), contact_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        rows = conn.execute(
+            select(unread_msg_ids.c.msg_id).where(unread_msg_ids.c.contact_id == contact_id)
+        ).all()
+        msg_ids = [r.msg_id for r in rows]
+        conn.execute(sa_delete(unread_msg_ids).where(unread_msg_ids.c.contact_id == contact_id))
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(
+            unread_count=0,
+            unread_ai_count=0,
+            updated_at=time.time(),
+        ))
     return msg_ids
 
 
 def mark_user_messages_as_read(contact_id: int) -> list[str]:
-    """Reset only unread_count (user messages) and return msg_ids for read receipts.
-
-    Unlike mark_as_read(), this preserves unread_ai_count so the operator
-    still sees that the AI replied while they were away.
-    """
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT msg_id FROM unread_msg_ids WHERE contact_id = ?", (contact_id,)
-    ).fetchall()
-    msg_ids = [r["msg_id"] for r in rows]
-    conn.execute("DELETE FROM unread_msg_ids WHERE contact_id = ?", (contact_id,))
-    conn.execute(
-        "UPDATE contacts SET unread_count = 0, updated_at = ? WHERE id = ?",
-        (time.time(), contact_id),
-    )
-    conn.commit()
+    """Reset only unread_count (user messages) and return msg_ids for read receipts."""
+    with get_engine().begin() as conn:
+        rows = conn.execute(
+            select(unread_msg_ids.c.msg_id).where(unread_msg_ids.c.contact_id == contact_id)
+        ).all()
+        msg_ids = [r.msg_id for r in rows]
+        conn.execute(sa_delete(unread_msg_ids).where(unread_msg_ids.c.contact_id == contact_id))
+        conn.execute(sa_update(contacts).where(contacts.c.id == contact_id).values(
+            unread_count=0,
+            updated_at=time.time(),
+        ))
     return msg_ids
 
 
 def get_observations(contact_id: int) -> list[str]:
     """Return all observations for a contact."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT text FROM observations WHERE contact_id = ? ORDER BY created_at",
-        (contact_id,),
-    ).fetchall()
-    return [r["text"] for r in rows]
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(observations.c.text)
+            .where(observations.c.contact_id == contact_id)
+            .order_by(observations.c.created_at)
+        ).all()
+    return [r.text for r in rows]
 
 
-def set_observations(contact_id: int, observations: list[str]) -> None:
+def set_observations(contact_id: int, observations_list: list[str]) -> None:
     """Replace all observations for a contact."""
-    conn = get_db()
-    conn.execute("DELETE FROM observations WHERE contact_id = ?", (contact_id,))
     now = time.time()
-    conn.executemany(
-        "INSERT INTO observations (contact_id, text, created_at) VALUES (?, ?, ?)",
-        [(contact_id, text, now) for text in observations if text.strip()],
-    )
-    conn.commit()
+    cleaned = [t for t in observations_list if t.strip()]
+    with get_engine().begin() as conn:
+        conn.execute(sa_delete(observations).where(observations.c.contact_id == contact_id))
+        if cleaned:
+            conn.execute(sa_insert(observations), [
+                {"contact_id": contact_id, "text": t, "created_at": now} for t in cleaned
+            ])
 
 
 def add_observation(contact_id: int, text: str) -> None:
     """Append a single observation if it doesn't already exist."""
-    conn = get_db()
-    existing = conn.execute(
-        "SELECT 1 FROM observations WHERE contact_id = ? AND text = ?",
-        (contact_id, text),
-    ).fetchone()
-    if existing:
-        return
-    conn.execute(
-        "INSERT INTO observations (contact_id, text, created_at) VALUES (?, ?, ?)",
-        (contact_id, text, time.time()),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        existing = conn.execute(
+            select(observations.c.id).where(
+                (observations.c.contact_id == contact_id) & (observations.c.text == text)
+            )
+        ).first()
+        if existing:
+            return
+        conn.execute(sa_insert(observations).values(
+            contact_id=contact_id, text=text, created_at=time.time()
+        ))
 
 
 def list_contacts(q: str = "", archived: bool = False) -> list[dict]:
-    """List contacts with last message preview, tags, and unread counts.
+    """List contacts with last message preview, tags, and unread counts."""
+    from sqlalchemy import text as sql_text
 
-    This replaces the old glob-all-JSON-files approach with a single efficient query.
-    """
-    conn = get_db()
-
-    # Main query: contacts with last visible message via subquery
-    rows = conn.execute(
-        """
+    # Single SQL statement — easier to read than building it via Core.
+    # Only standard SQL (MAX, GROUP BY, INNER JOIN, LEFT JOIN, COALESCE),
+    # works in both SQLite and Postgres unchanged.
+    sql = sql_text("""
         SELECT c.*,
                lm.content   AS last_msg_content,
                lm.role      AS last_msg_role,
@@ -235,61 +222,58 @@ def list_contacts(q: str = "", archived: bool = False) -> list[dict]:
                 GROUP BY contact_id
             ) m2 ON m1.contact_id = m2.contact_id AND m1.ts = m2.max_ts
         ) lm ON lm.contact_id = c.id
-        WHERE c.is_archived = ?
+        WHERE c.is_archived = :archived
         ORDER BY COALESCE(lm.ts, c.updated_at) DESC
-        """,
-        (1 if archived else 0,),
-    ).fetchall()
+    """)
 
-    results = []
-    for row in rows:
-        contact_id = row["id"]
+    with get_engine().connect() as conn:
+        rows = conn.execute(sql, {"archived": 1 if archived else 0}).mappings().all()
 
-        # Get tags for this contact
-        tag_rows = conn.execute(
-            """SELECT t.name FROM tags t
-               JOIN contact_tags ct ON ct.tag_id = t.id
-               WHERE ct.contact_id = ?""",
-            (contact_id,),
-        ).fetchall()
-        tags = [t["name"] for t in tag_rows]
+        results = []
+        for row in rows:
+            contact_id = row["id"]
+            tag_rows = conn.execute(
+                select(tags.c.name)
+                .join(contact_tags, contact_tags.c.tag_id == tags.c.id)
+                .where(contact_tags.c.contact_id == contact_id)
+            ).all()
+            tags_list = [t.name for t in tag_rows]
 
-        # Build last message preview
-        last_content = ""
-        lmt = row["last_msg_media_type"]
-        if row["last_msg_content"] is not None:
-            if lmt == "image":
-                last_content = (row["last_msg_content"] or "")[:80] or "\U0001f4f7 Imagem"
-            elif lmt == "audio":
-                last_content = "\U0001f3a4 Áudio"
-            else:
-                last_content = (row["last_msg_content"] or "")[:80]
+            last_content = ""
+            lmt = row["last_msg_media_type"]
+            if row["last_msg_content"] is not None:
+                if lmt == "image":
+                    last_content = (row["last_msg_content"] or "")[:80] or "\U0001f4f7 Imagem"
+                elif lmt == "audio":
+                    last_content = "\U0001f3a4 Áudio"
+                else:
+                    last_content = (row["last_msg_content"] or "")[:80]
 
-        is_group = bool(row["is_group"])
-        group_name = row["group_name"] or ""
-        name = group_name if is_group else (row["name"] or "")
+            is_group = bool(row["is_group"])
+            group_name = row["group_name"] or ""
+            name = group_name if is_group else (row["name"] or "")
 
-        results.append({
-            "id": contact_id,
-            "phone": row["phone"],
-            "name": name,
-            "last_message": last_content,
-            "last_message_role": row["last_msg_role"] or "",
-            "last_message_ts": row["last_msg_ts"] or 0,
-            "last_message_status": row["last_msg_status"] or "",
-            "last_message_msg_id": row["last_msg_id"] or "",
-            "msg_count": row["msg_count"] or 0,
-            "unread_count": row["unread_count"],
-            "unread_ai_count": row["unread_ai_count"],
-            "ai_enabled": bool(row["ai_enabled"]),
-            "is_group": is_group,
-            "group_name": group_name,
-            "is_archived": bool(row["is_archived"]),
-            "archived_by_app": bool(row["archived_by_app"]) if row["archived_by_app"] is not None else False,
-            "can_send": bool(row["can_send"]) if row["can_send"] is not None else True,
-            "tags": tags,
-            "updated_at": row["updated_at"],
-        })
+            results.append({
+                "id": contact_id,
+                "phone": row["phone"],
+                "name": name,
+                "last_message": last_content,
+                "last_message_role": row["last_msg_role"] or "",
+                "last_message_ts": row["last_msg_ts"] or 0,
+                "last_message_status": row["last_msg_status"] or "",
+                "last_message_msg_id": row["last_msg_id"] or "",
+                "msg_count": row["msg_count"] or 0,
+                "unread_count": row["unread_count"],
+                "unread_ai_count": row["unread_ai_count"],
+                "ai_enabled": bool(row["ai_enabled"]),
+                "is_group": is_group,
+                "group_name": group_name,
+                "is_archived": bool(row["is_archived"]),
+                "archived_by_app": bool(row["archived_by_app"]) if row["archived_by_app"] is not None else False,
+                "can_send": bool(row["can_send"]) if row["can_send"] is not None else True,
+                "tags": tags_list,
+                "updated_at": row["updated_at"],
+            })
 
     if q:
         ql = q.lower()
@@ -306,25 +290,24 @@ def list_contacts(q: str = "", archived: bool = False) -> list[dict]:
 
 def get_full_contact(phone: str) -> dict | None:
     """Get full contact data for API response (contact + info + observations)."""
-    conn = get_db()
     variants = _br_phone_variants(phone)
-    placeholders = ",".join("?" for _ in variants)
-    row = conn.execute(
-        f"SELECT * FROM contacts WHERE phone IN ({placeholders})", variants
-    ).fetchone()
-    if row is None:
-        return None
-
-    contact_id = row["id"]
-    observations = get_observations(contact_id)
-
-    tag_rows = conn.execute(
-        """SELECT t.name FROM tags t
-           JOIN contact_tags ct ON ct.tag_id = t.id
-           WHERE ct.contact_id = ?""",
-        (contact_id,),
-    ).fetchall()
-    tags = [t["name"] for t in tag_rows]
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(contacts).where(contacts.c.phone.in_(variants))
+        ).mappings().first()
+        if row is None:
+            return None
+        contact_id = row["id"]
+        obs_rows = conn.execute(
+            select(observations.c.text)
+            .where(observations.c.contact_id == contact_id)
+            .order_by(observations.c.created_at)
+        ).all()
+        tag_rows = conn.execute(
+            select(tags.c.name)
+            .join(contact_tags, contact_tags.c.tag_id == tags.c.id)
+            .where(contact_tags.c.contact_id == contact_id)
+        ).all()
 
     data = _row_to_dict(row)
     data["info"] = {
@@ -333,14 +316,14 @@ def get_full_contact(phone: str) -> dict | None:
         "profession": row["profession"],
         "company": row["company"],
         "address": row["address"],
-        "observations": observations,
+        "observations": [r.text for r in obs_rows],
     }
-    data["tags"] = tags
+    data["tags"] = [t.name for t in tag_rows]
     return data
 
 
 def _row_to_dict(row) -> dict:
-    """Convert a sqlite3.Row to a plain dict with Python types."""
+    """Convert a SQLAlchemy mapping row to a plain dict with Python types."""
     return {
         "id": row["id"],
         "phone": row["phone"],

@@ -24,7 +24,7 @@ Antes de gerar qualquer arquivo, **leia** estes arquivos para seguir os padrões
 
 - [agent/tools/save_contact_info.py](agent/tools/save_contact_info.py) — padrão de tool (schema dict + `execute(ctx, args)`)
 - [agent/handler.py](agent/handler.py) linhas 227-300 — como prompt fragments são chamados
-- [db/schema.sql](db/schema.sql) — estilo de SQL (CREATE TABLE IF NOT EXISTS, índices)
+- [db/tables.py](db/tables.py) — `Table` objects do core (referência de tipos e nomes)
 - [server/routes/tags.py](server/routes/tags.py) — padrão de APIRouter + helpers `_ok`/`_err`
 - [web/static/js/components/Dashboard.js](web/static/js/components/Dashboard.js) — padrão de componente Preact + HTM
 - [storages/plugins/lembretes/](storages/plugins/lembretes/) — plugin completo de referência (copie e adapte)
@@ -78,7 +78,10 @@ Cada tool é um par `(schema, executor)`. O executor recebe `ToolContext` (ver [
 
 ```python
 import logging
-from db.connection import get_db
+import time
+
+from sqlalchemy import text
+from plugins.context import broadcast, make_plugin_db
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +104,44 @@ MY_TOOL = {
 def execute_my_tool(ctx, args: dict) -> str | None:
     # ctx.contact é ContactMemory; ctx.handler é AgentHandler
     # ctx.tag_registry; ctx.plugin_id == '<id>'
-    conn = get_db()
-    # use prefixo plugin_<id>_ em queries
+    with make_plugin_db() as conn:
+        conn.execute(
+            text("INSERT INTO plugin_<id>_items (text, ts) VALUES (:text, :ts)"),
+            {"text": args.get("text", ""), "ts": int(time.time())},
+        )
     return None  # ou string de feedback
 
 CORE_TOOLS = [(MY_TOOL, execute_my_tool)]
 ```
 
+**Banco de dados (importante)**: o WhatsBot agora roda em cima de SQLAlchemy
+Core (SQLite default, Postgres opcional via tela Settings → Banco). Plugin
+acessa o banco SEMPRE via:
+
+```python
+from sqlalchemy import text
+from plugins.context import make_plugin_db
+
+with make_plugin_db() as conn:
+    rows = conn.execute(
+        text("SELECT * FROM plugin_<id>_items WHERE phone = :phone"),
+        {"phone": phone},
+    ).mappings().all()
+```
+
+Proibido em código de plugin (quebra em Postgres):
+
+- `?` placeholders (use `:nome` bind params)
+- `strftime('%s','now')` → use `int(time.time())` em Python
+- `INSERT OR REPLACE` / `INSERT OR IGNORE` → ver `db.upsert.upsert()` ou refatore com select+update
+- `cur.lastrowid` direto → use `result.inserted_primary_key[0]`
+- Qualquer função/sintaxe SQLite-only (`||` concat com regras peculiares, `AUTOINCREMENT`, `PRAGMA`).
+
 ### prompts.py (se houver fragments)
 
 ```python
-from db.connection import get_db
+from sqlalchemy import text
+from plugins.context import make_plugin_db
 
 def my_fragment(contact, ctx) -> str:
     # contact: ContactMemory; ctx: PromptContext
@@ -126,14 +156,17 @@ Mounted em `/api/plugins/<id>` automaticamente. Auth do core já cobre.
 
 ```python
 from fastapi import APIRouter
-from db.connection import get_db
+from sqlalchemy import text
+from plugins.context import make_plugin_db
 
 router = APIRouter()
 
 @router.get("/items")
 async def list_items():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM plugin_<id>_items").fetchall()
+    with make_plugin_db() as conn:
+        rows = conn.execute(
+            text("SELECT * FROM plugin_<id>_items ORDER BY ts DESC")
+        ).mappings().all()
     return {"ok": True, "data": [dict(r) for r in rows]}
 ```
 
@@ -151,11 +184,21 @@ class Settings(BaseModel):
 
 **Toda** tabela / índice tem que começar com `plugin_<id>_`. O migrator faz validação por regex.
 
+**Sintaxe das migrations.** O migrator usa `engine.begin()` e roda contra o
+backend ativo — SQLite por default, Postgres se o usuário trocou pelo Settings.
+Para máxima portabilidade, evite `strftime` (gere timestamps no Python com
+`int(time.time())`) e defaults baseados em funções específicas. `INTEGER PRIMARY
+KEY AUTOINCREMENT` funciona em SQLite (default) mas falha em fresh Postgres
+install — se o plugin precisar rodar em Postgres direto do zero, prefira
+gerar o `id` no código (UUID, snowflake) e declarar `id TEXT PRIMARY KEY`.
+Para uma migração SQLite → Postgres existente, o endpoint admin reflete as
+tabelas do source e recria no destino com os tipos corretos.
+
 ```sql
 CREATE TABLE IF NOT EXISTS plugin_<id>_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+    id         INTEGER PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    created_at REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plugin_<id>_items_created_at
     ON plugin_<id>_items(created_at);
@@ -223,7 +266,7 @@ Ao terminar, mostre:
 
 - **Nunca modifique arquivos do core** (`agent/`, `db/`, `server/`, `web/`). Plugin é totalmente isolado.
 - **Sempre prefixe tabelas com `plugin_<id>_`**. O migrator rejeita o contrário.
-- **Não invente nomes de imports** — use os do importmap (`preact`, `preact/hooks`, `htm`) e os módulos que o core já expõe (`db.connection`, `db.repositories.*`, `agent.memory`).
+- **Não invente nomes de imports** — use os do importmap (`preact`, `preact/hooks`, `htm`) e os módulos que o core já expõe (`db.engine`, `db.tables`, `db.repositories.*`, `agent.memory`, `plugins.context`). Para acesso ao banco em plugin: `from plugins.context import make_plugin_db` e `from sqlalchemy import text`.
 - **Tool name é global**: se conflitar com um nome existente o loader rejeita o plugin. Prefira nomes específicos como `<id>_<verbo>` (ex: `orders_create`, `cardapio_listar`).
 - **Settings UI é gerada automaticamente** a partir do schema Pydantic — strings, ints, floats, bools, enums. Não escreva form manual.
 - **Migrations rodam uma única vez** por versão. Para evoluir o schema, crie `002_*.sql`, `003_*.sql` — não edite `001`.

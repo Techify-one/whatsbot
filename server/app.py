@@ -15,7 +15,7 @@ from server.auth import auth_required, verify_token
 from server.helpers import _get_web_dir
 from server.state import MemoryLogHandler, ConnectionManager, AppState
 from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task
-from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, plugins as plugins_routes, tools as tools_routes
+from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, plugins as plugins_routes, tools as tools_routes, admin as admin_routes
 from db.repositories import tool_override_repo
 from plugins.loader import bootstrap_initial_plugins, discover_and_load, PluginRegistry
 from plugins.context import set_runtime as _set_plugin_runtime
@@ -281,6 +281,7 @@ def create_app(
     update.register_routes(app, deps)
     plugins_routes.register_routes(app, deps)
     tools_routes.register_routes(app, deps)
+    admin_routes.register_routes(app, deps)
 
     # ── Plugin routers and static assets ──────────────────────────────
     for loaded in registry.loaded.values():

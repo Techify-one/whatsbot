@@ -1,62 +1,67 @@
 """Repository for execution tracking tables."""
 
+from __future__ import annotations
+
 import json
 import time
 
-from db.connection import get_db
+from sqlalchemy import and_, delete as sa_delete, func, insert as sa_insert, select, update as sa_update
+
+from db.engine import get_engine
+from db.tables import execution_steps, executions
 
 
 def create(phone: str, trigger_type: str = "webhook") -> int:
     """Create a new execution and return its ID."""
-    conn = get_db()
-    cursor = conn.execute(
-        "INSERT INTO executions (phone, trigger_type, started_at) VALUES (?, ?, ?)",
-        (phone, trigger_type, time.time()),
-    )
-    conn.commit()
-    return cursor.lastrowid
+    with get_engine().begin() as conn:
+        result = conn.execute(sa_insert(executions).values(
+            phone=phone, trigger_type=trigger_type, started_at=time.time(),
+        ))
+        return result.inserted_primary_key[0]
 
 
 def add_step(execution_id: int, step_type: str,
              data: dict | None = None, status: str = "ok") -> int:
     """Add a step to an execution and return step ID."""
-    conn = get_db()
     data_json = json.dumps(data, ensure_ascii=False) if data else None
-    cursor = conn.execute(
-        "INSERT INTO execution_steps (execution_id, step_type, status, data, ts) VALUES (?, ?, ?, ?, ?)",
-        (execution_id, step_type, status, data_json, time.time()),
-    )
-    conn.commit()
-    return cursor.lastrowid
+    with get_engine().begin() as conn:
+        result = conn.execute(sa_insert(execution_steps).values(
+            execution_id=execution_id,
+            step_type=step_type,
+            status=status,
+            data=data_json,
+            ts=time.time(),
+        ))
+        return result.inserted_primary_key[0]
 
 
 def complete(execution_id: int, status: str = "completed",
              error: str | None = None) -> None:
     """Mark an execution as completed or failed."""
-    conn = get_db()
-    conn.execute(
-        "UPDATE executions SET status = ?, completed_at = ?, error = ? WHERE id = ?",
-        (status, time.time(), error, execution_id),
-    )
-    conn.commit()
+    with get_engine().begin() as conn:
+        conn.execute(sa_update(executions).where(executions.c.id == execution_id).values(
+            status=status,
+            completed_at=time.time(),
+            error=error,
+        ))
 
 
 def get_by_id(execution_id: int) -> dict | None:
     """Return an execution with all its steps."""
-    conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM executions WHERE id = ?", (execution_id,)
-    ).fetchone()
-    if not row:
-        return None
-
-    execution = dict(row)
-    steps = conn.execute(
-        "SELECT * FROM execution_steps WHERE execution_id = ? ORDER BY ts",
-        (execution_id,),
-    ).fetchall()
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            select(executions).where(executions.c.id == execution_id)
+        ).mappings().first()
+        if not row:
+            return None
+        execution = dict(row)
+        step_rows = conn.execute(
+            select(execution_steps)
+            .where(execution_steps.c.execution_id == execution_id)
+            .order_by(execution_steps.c.ts)
+        ).mappings().all()
     execution["steps"] = []
-    for s in steps:
+    for s in step_rows:
         step = dict(s)
         if step.get("data"):
             try:
@@ -71,25 +76,29 @@ def list_executions(limit: int = 50, offset: int = 0,
                     phone: str | None = None,
                     status: str | None = None) -> list[dict]:
     """List executions (newest first) with step count and duration."""
-    conn = get_db()
-    clauses = []
-    params: list = []
+    step_count = (
+        select(func.count())
+        .where(execution_steps.c.execution_id == executions.c.id)
+        .correlate(executions)
+        .scalar_subquery()
+        .label("step_count")
+    )
+    stmt = (
+        select(executions, step_count)
+        .order_by(executions.c.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    where_clauses = []
     if phone:
-        clauses.append("e.phone = ?")
-        params.append(phone)
+        where_clauses.append(executions.c.phone == phone)
     if status:
-        clauses.append("e.status = ?")
-        params.append(status)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        where_clauses.append(executions.c.status == status)
+    if where_clauses:
+        stmt = stmt.where(and_(*where_clauses))
 
-    rows = conn.execute(
-        f"""SELECT e.*,
-                   (SELECT COUNT(*) FROM execution_steps s WHERE s.execution_id = e.id) AS step_count
-            FROM executions e {where}
-            ORDER BY e.id DESC
-            LIMIT ? OFFSET ?""",
-        params + [limit, offset],
-    ).fetchall()
+    with get_engine().connect() as conn:
+        rows = conn.execute(stmt).mappings().all()
 
     results = []
     for r in rows:
@@ -104,48 +113,49 @@ def list_executions(limit: int = 50, offset: int = 0,
 
 def count(phone: str | None = None, status: str | None = None) -> int:
     """Count total executions for pagination."""
-    conn = get_db()
-    clauses = []
-    params: list = []
+    stmt = select(func.count()).select_from(executions)
+    where_clauses = []
     if phone:
-        clauses.append("phone = ?")
-        params.append(phone)
+        where_clauses.append(executions.c.phone == phone)
     if status:
-        clauses.append("status = ?")
-        params.append(status)
-    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    row = conn.execute(f"SELECT COUNT(*) AS cnt FROM executions {where}", params).fetchone()
-    return row["cnt"]
+        where_clauses.append(executions.c.status == status)
+    if where_clauses:
+        stmt = stmt.where(and_(*where_clauses))
+    with get_engine().connect() as conn:
+        return conn.execute(stmt).scalar() or 0
 
 
 def prune(max_keep: int) -> int:
-    """Delete oldest executions keeping only the most recent max_keep. Returns count deleted."""
-    conn = get_db()
-    total = conn.execute("SELECT COUNT(*) AS cnt FROM executions").fetchone()["cnt"]
-    if total <= max_keep:
-        return 0
-    cursor = conn.execute(
-        """DELETE FROM executions WHERE id NOT IN (
-            SELECT id FROM executions ORDER BY id DESC LIMIT ?
-        )""",
-        (max_keep,),
-    )
-    conn.commit()
-    return cursor.rowcount
+    """Delete oldest executions keeping only the most recent ``max_keep``."""
+    with get_engine().begin() as conn:
+        total = conn.execute(select(func.count()).select_from(executions)).scalar() or 0
+        if total <= max_keep:
+            return 0
+        keep_ids = conn.execute(
+            select(executions.c.id).order_by(executions.c.id.desc()).limit(max_keep)
+        ).scalars().all()
+        result = conn.execute(sa_delete(executions).where(executions.c.id.notin_(keep_ids)))
+    return result.rowcount or 0
+
+
+def delete_older_than(cutoff_ts: float) -> int:
+    """Delete executions whose ``started_at`` is before ``cutoff_ts``."""
+    with get_engine().begin() as conn:
+        result = conn.execute(sa_delete(executions).where(executions.c.started_at < cutoff_ts))
+    return result.rowcount or 0
 
 
 def get_webhook_payloads(limit: int = 50) -> list[dict]:
     """Get recent webhook payloads from execution steps (replaces in-memory deque)."""
-    conn = get_db()
-    rows = conn.execute(
-        """SELECT s.ts, s.data, e.phone
-           FROM execution_steps s
-           JOIN executions e ON e.id = s.execution_id
-           WHERE s.step_type = 'webhook_received'
-           ORDER BY s.ts DESC
-           LIMIT ?""",
-        (limit,),
-    ).fetchall()
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            select(execution_steps.c.ts, execution_steps.c.data, executions.c.phone)
+            .join(executions, executions.c.id == execution_steps.c.execution_id)
+            .where(execution_steps.c.step_type == "webhook_received")
+            .order_by(execution_steps.c.ts.desc())
+            .limit(limit)
+        ).mappings().all()
+
     results = []
     for r in rows:
         entry = {"ts": r["ts"], "phone": r["phone"]}

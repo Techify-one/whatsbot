@@ -29,8 +29,7 @@ from db.migrate_json import needs_migration, migrate
 data_dir = get_data_dir()
 storages_dir = data_dir / "storages"
 storages_dir.mkdir(exist_ok=True)
-db_path = storages_dir / "whatsbot.db"
-init_db(db_path)
+init_db(storages_dir=storages_dir)
 
 if needs_migration(data_dir):
     migrate(data_dir)

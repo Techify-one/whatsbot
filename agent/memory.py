@@ -146,12 +146,15 @@ class ContactMemory:
 
     def get_unread_msg_ids(self) -> list[str]:
         """Return unread message IDs from the database."""
-        from db.connection import get_db
-        conn = get_db()
-        rows = conn.execute(
-            "SELECT msg_id FROM unread_msg_ids WHERE contact_id = ?", (self.id,)
-        ).fetchall()
-        return [r["msg_id"] for r in rows]
+        from sqlalchemy import select
+
+        from db.engine import get_engine
+        from db.tables import unread_msg_ids
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                select(unread_msg_ids.c.msg_id).where(unread_msg_ids.c.contact_id == self.id)
+            ).all()
+        return [r.msg_id for r in rows]
 
     def increment_unread(self, msg_id: str | None = None):
         self.unread_count += 1
