@@ -216,7 +216,11 @@ class ContactMemory:
         result: list[dict] = []
         for i, m in enumerate(recent):
             mt = m.get("media_type")
-            if mt == "image" and m["role"] == "user":
+            if m["role"] == "private_note":
+                content = m.get("content", "")
+                result.append({"role": "user",
+                               "content": f"[Nota privada do operador]: {content}"})
+            elif mt == "image" and m["role"] == "user":
                 if i == last_image_idx:
                     content = _build_image_content(m.get("media_path", ""), m.get("content", ""))
                 else:

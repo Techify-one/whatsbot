@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -10,9 +11,11 @@ from fastapi.responses import FileResponse
 from gowa.client import GOWASendError, extract_msg_id
 
 from db.repositories import contact_repo, message_repo
-from server.helpers import _ok, _err
+from server.helpers import _ok, _err, parse_split_reply
 
 logger = logging.getLogger(__name__)
+
+_AT_IA_RE = re.compile(r"(?i)(^|\s)@ia\b")
 
 
 def register_routes(app, deps):
@@ -229,6 +232,130 @@ def register_routes(app, deps):
         })
 
         return _ok({"message": "Mensagem enviada.", "msg_id": msg_id})
+
+    async def _run_private_ai(phone: str, text: str):
+        """Process a private message that mentions @ia.
+
+        Calls the LLM with the conversation context (including prior private notes)
+        and full tool access. Any tool calls (e.g. reminder_create, save_contact_info)
+        run normally and their cards are broadcast to the panel. The reply text is
+        then sent to the contact via WhatsApp as a regular assistant message.
+        """
+        try:
+            result = await agent_handler.aprocess_message(
+                phone, text,
+                save_user_message=False,
+                save_response=False,
+            )
+            reply_text = (result.reply or "").strip()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.exception("[PrivateAI] aprocess_message failed for %s: %s", phone, e)
+            await ws_manager.broadcast("new_message", {
+                "phone": phone,
+                "message": {"role": "error",
+                            "content": f"Erro ao processar @ia: {e}",
+                            "ts": time.time()},
+            })
+            return
+
+        if result.tool_calls:
+            try:
+                await deps.broadcast_tool_calls(
+                    phone, result.tool_calls, result.contact_info)
+            except Exception as e:
+                logger.warning("[PrivateAI] broadcast_tool_calls failed for %s: %s",
+                               phone, e)
+
+        if not reply_text:
+            return
+
+        # The LLM may return a JSON array of strings when split_messages is on.
+        parts = (parse_split_reply(reply_text)
+                 if settings.get("split_messages", True) else [reply_text])
+
+        for part in parts:
+            state.recently_sent[f"{phone}:{part[:120]}"] = time.time()
+            send_failed = False
+            send_error = ""
+            send_result = None
+            try:
+                send_result = await asyncio.to_thread(
+                    gowa_client.send_message, phone, part)
+            except GOWASendError as e:
+                logger.error("[PrivateAI] send failed for %s: %s", phone, e)
+                send_failed = True
+                send_error = str(e)
+            except Exception as e:
+                logger.error("[PrivateAI] send failed for %s: %s", phone, e)
+                send_failed = True
+                send_error = str(e)
+
+            msg_id = extract_msg_id(send_result) if not send_failed else None
+            if msg_id:
+                state.processed_messages.add(msg_id)
+
+            try:
+                msg_data = await asyncio.to_thread(
+                    agent_handler.save_assistant_message, phone, part,
+                    msg_id=msg_id,
+                    status="failed" if send_failed else "sent",
+                )
+            except Exception as e:
+                logger.error("[PrivateAI] failed to save assistant message: %s", e)
+                msg_data = {
+                    "role": "assistant", "content": part, "ts": time.time(),
+                    "status": "failed" if send_failed else "sent", "msg_id": msg_id,
+                }
+
+            if send_failed:
+                await ws_manager.broadcast("new_message", {
+                    "phone": phone,
+                    "message": {"role": "error",
+                                "content": f"Falha ao enviar resposta da IA: {send_error}",
+                                "ts": time.time()},
+                })
+                return
+            await ws_manager.broadcast("new_message", {
+                "phone": phone, "message": msg_data,
+            })
+
+    @app.post("/api/contacts/{phone}/private-message")
+    async def send_private_message(phone: str, body: dict):
+        """Save a message that stays in the panel — never delivered to the contact.
+
+        If the text mentions `@ia`, kicks off LLM processing in a background task.
+        """
+        text = (body.get("text") or "").strip()
+        if not text:
+            return _err("Campo 'text' é obrigatório.")
+
+        try:
+            def _save():
+                contact = agent_handler._get_contact(phone)
+                contact.add_message("private_note", text)
+            await asyncio.to_thread(_save)
+        except Exception as e:
+            logger.error("[Private] Failed to save private message for %s: %s", phone, e)
+            return _err(f"Erro ao salvar mensagem privada: {e}", status=500)
+
+        await ws_manager.broadcast("new_message", {
+            "phone": phone,
+            "message": {
+                "role": "private_note",
+                "content": text,
+                "ts": time.time(),
+                "status": None,
+            },
+        })
+
+        if _AT_IA_RE.search(text):
+            asyncio.create_task(_run_private_ai(phone, text))
+
+        logger.info("[Private] Saved private note for %s (@ia=%s): %s",
+                    phone, bool(_AT_IA_RE.search(text)), text[:80])
+        return _ok({"message": "Mensagem privada salva."})
 
     @app.post("/api/contacts/{phone}/retry-send")
     async def retry_send_to_contact(phone: str, body: dict):

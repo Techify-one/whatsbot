@@ -454,6 +454,13 @@ class AgentHandler:
             "\n\nMensagens marcadas com '[Mensagem do operador humano]' no histórico "
             "foram enviadas por um atendente real, não por você. Considere o contexto "
             "mas não imite o estilo do operador."
+            "\n\nMensagens marcadas com '[Nota privada do operador]' são notas "
+            "internas do painel — o contato NUNCA as viu. Quando uma nota começar "
+            "com '@ia', trate-a como instrução direta do operador para você executar: "
+            "use as tools disponíveis (ex.: criar lembrete, salvar informações do "
+            "contato, etc.) se a instrução pedir, e redija a resposta ao contato. "
+            "Caso a nota NÃO comece com '@ia', use-a apenas como contexto, sem citar, "
+            "mencionar ou parafrasear em respostas ao contato."
         )
 
         # Plugin-contributed prompt fragments. Each fragment is a callable that
@@ -505,7 +512,8 @@ class AgentHandler:
                                save_user_message: bool = True,
                                save_response: bool = True,
                                image_path: str | None = None,
-                               audio_path: str | None = None) -> ProcessResult:
+                               audio_path: str | None = None,
+                               disable_tools: bool = False) -> ProcessResult:
         """Async cancellable equivalent of process_message.
 
         Uses AsyncOpenAI so that cancelling the surrounding asyncio task aborts the
@@ -537,7 +545,7 @@ class AgentHandler:
 
         try:
             client = self._get_async_client()
-            active_tools = self._tool_schemas
+            active_tools = [] if disable_tools else self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,
@@ -637,7 +645,8 @@ class AgentHandler:
                         save_user_message: bool = True,
                         save_response: bool = True,
                         image_path: str | None = None,
-                        audio_path: str | None = None) -> ProcessResult:
+                        audio_path: str | None = None,
+                        disable_tools: bool = False) -> ProcessResult:
         """Process an incoming message and return the AI response."""
         if not self.api_key:
             return ProcessResult(reply="[WhatsBot] API key não configurada.")
@@ -666,7 +675,7 @@ class AgentHandler:
 
         try:
             client = self._get_client()
-            active_tools = self._tool_schemas
+            active_tools = [] if disable_tools else self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,

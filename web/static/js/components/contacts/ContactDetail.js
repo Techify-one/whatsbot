@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { sendMessage, retrySend, sendImage, sendAudio, sendPresence } from '../../services/api.js';
+import { sendMessage, retrySend, sendImage, sendAudio, sendPresence, sendPrivateMessage } from '../../services/api.js';
 import { SendIcon, BackArrowIcon, DefaultAvatar, GroupAvatar, EmojiIcon, AttachIcon, MicIcon, SingleCheckIcon, DoubleCheckIcon, ClockIcon, FailedIcon, RetryIcon, StopIcon } from './icons.js';
 import { formatBubbleTime } from './utils.js';
 import { formatWhatsApp } from '../../utils/formatWhatsApp.js';
@@ -16,6 +16,8 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordDuration, setRecordDuration] = useState(0);
+  // mode: 'reply' sends to the contact; 'private' stays in the panel only
+  const [mode, setMode] = useState('reply');
   // pendingMedia: { type: 'image'|'audio', file, blob, filename, previewUrl }
   const [pendingMedia, setPendingMedia] = useState(null);
   const chatRef = useRef(null);
@@ -29,7 +31,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages]);
 
-  useEffect(() => { setInput(''); }, [phone]);
+  useEffect(() => { setInput(''); setMode('reply'); }, [phone]);
 
   // Auto-focus message input when opening a chat
   useEffect(() => {
@@ -111,10 +113,29 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
     sendPresence(phone, 'stop').catch(() => {});
 
     setInput('');
-
-    // Add message optimistically (status='operator' marks it as manual send)
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const msgTs = Date.now() / 1000;
+
+    if (mode === 'private') {
+      setContactData(prev => prev ? {
+        ...prev,
+        messages: [...(prev.messages || []), {
+          role: 'private_note', content: text, ts: msgTs, status: null,
+          _localId: localId, _status: 'sending',
+        }],
+      } : prev);
+      try {
+        const res = await sendPrivateMessage(phone, text);
+        updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed' }));
+      } catch (err) {
+        console.error('Private send error:', err);
+        updateMsgByLocalId(localId, () => ({ _status: 'failed' }));
+      }
+      inputRef.current?.focus();
+      return;
+    }
+
+    // Add message optimistically (status='operator' marks it as manual send)
     setContactData(prev => prev ? {
       ...prev,
       messages: [...(prev.messages || []), {
@@ -370,10 +391,31 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
           : messages.map((m, i) => {
               const isUser = m.role === 'user';
               const isTranscription = m.role === 'transcription';
+              const isPrivateNote = m.role === 'private_note';
               const isSystemNotice = m.role === 'system_notice';
               const isToolCall = m.role === 'tool_call';
               const isError = m.role === 'error';
               const isFirst = i === 0 || messages[i - 1].role !== m.role;
+
+              if (isPrivateNote) {
+                const failed = m._status === 'failed';
+                const pending = m._status === 'sending';
+                return html`
+                  <div key=${m._localId || i} class="flex justify-center mt-[4px]">
+                    <div class="max-w-[75%] rounded-[7.5px] px-[11px] pt-[6px] pb-[7px] text-[13px] leading-[18px] whitespace-pre-wrap relative shadow-sm"
+                         style="background:#3b266b; color:#ede9fe; border:1px solid #7c3aed; ${failed ? 'opacity:0.7;' : ''}">
+                      <span class="flex items-center gap-[5px] text-[10.5px] font-semibold mb-[3px] tracking-wide uppercase" style="color:#c4b5fd;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+                        Mensagem privada
+                      </span>
+                      <span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(m.content) }}></span>
+                      <span class="float-right ml-[8px] mt-[3px] text-[10.5px] leading-[14px] whitespace-nowrap" style="color:#a78bfa;">
+                        ${pending ? '⏳ ' : (failed ? '⚠ ' : '')}${formatBubbleTime(m.ts)}
+                      </span>
+                    </div>
+                  </div>
+                `;
+              }
 
               if (isTranscription) {
                 return html`
@@ -572,13 +614,34 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
           </button>
         </div>
       ` : html`
+        <div class="flex items-center px-[14px] pt-[7px] pb-[3px] bg-wa-panel shrink-0">
+          <div class="inline-flex items-center gap-[2px] p-[3px] rounded-full" style="background:#111b21;">
+            <button
+              type="button"
+              onClick=${() => setMode('reply')}
+              class="text-[12px] font-medium px-[14px] py-[4px] rounded-full transition-colors"
+              style="background:${mode === 'reply' ? '#005c4b' : 'transparent'}; color:${mode === 'reply' ? '#ffffff' : '#aebac1'};"
+            >Responder</button>
+            <button
+              type="button"
+              onClick=${() => setMode('private')}
+              class="text-[12px] font-medium px-[14px] py-[4px] rounded-full transition-colors flex items-center gap-[5px]"
+              style="background:${mode === 'private' ? '#7c3aed' : 'transparent'}; color:${mode === 'private' ? '#ffffff' : '#aebac1'};"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/></svg>
+              Mensagem Privada
+            </button>
+          </div>
+        </div>
         <form onSubmit=${handleSend} class="flex items-center px-[10px] py-[5px] bg-wa-panel min-h-[62px] shrink-0">
           <button type="button" class="p-[8px] shrink-0" tabindex="-1">
             <${EmojiIcon} />
           </button>
-          <button type="button" class="p-[8px] shrink-0" tabindex="-1" onClick=${handleAttachClick}>
-            <${AttachIcon} />
-          </button>
+          ${mode === 'private' ? '' : html`
+            <button type="button" class="p-[8px] shrink-0" tabindex="-1" onClick=${handleAttachClick}>
+              <${AttachIcon} />
+            </button>
+          `}
           <div class="flex-1 mx-[5px]">
             <textarea
               ref=${inputRef}
@@ -587,18 +650,19 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               onInput=${handleInputChange}
               onKeyDown=${handleKeyDown}
               onPaste=${handlePaste}
-              placeholder="Digite uma mensagem"
+              placeholder=${mode === 'private' ? 'Mensagem privada (use @ia pra acionar a IA)' : 'Digite uma mensagem'}
               class="w-full block bg-wa-inputBg text-wa-text text-[15px] rounded-[8px] px-[12px] py-[9px] border border-wa-border outline-none placeholder-wa-secondary resize-none max-h-[120px] wa-scrollbar leading-[20px]"
             ></textarea>
           </div>
           ${hasText ? html`
             <button
               type="submit"
-              class="p-[8px] shrink-0 text-wa-iconActive transition-colors"
+              class="p-[8px] shrink-0 transition-colors"
+              style="color: ${mode === 'private' ? '#a78bfa' : '#00a884'};"
             >
               <${SendIcon} />
             </button>
-          ` : html`
+          ` : mode === 'private' ? '' : html`
             <button type="button" class="p-[8px] shrink-0 text-wa-icon" tabindex="-1" onClick=${handleMicClick}>
               <${MicIcon} />
             </button>

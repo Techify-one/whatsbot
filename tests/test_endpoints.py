@@ -271,6 +271,41 @@ r = client.post("/api/contacts/5511999990001/retry-send", json={"message": ""})
 check("POST /retry-send (empty) -> 400", r.status_code == 400)
 
 # ═══════════════════════════════════════════════════════════════════
+#  8b. Private message (panel-only) — no @ia
+# ═══════════════════════════════════════════════════════════════════
+section("Contacts — Private Message")
+
+_gowa_calls_before = mock_gowa_client.send_message.call_count
+r = client.post(
+    "/api/contacts/5511999990001/private-message",
+    json={"text": "Cliente VIP, atender com prioridade"},
+)
+check("POST /private-message -> 200", r.status_code == 200)
+check("POST /private-message -> saved", "salva" in r.json()["data"]["message"].lower())
+check(
+    "POST /private-message -> no GOWA send",
+    mock_gowa_client.send_message.call_count == _gowa_calls_before,
+)
+
+# Confirm the message is in the contact's history with role=private_note
+r = client.get("/api/contacts/5511999990001")
+msgs = r.json()["data"]["messages"]
+private_notes = [m for m in msgs if m.get("role") == "private_note"]
+check("GET /api/contacts -> private_note present", len(private_notes) >= 1)
+check(
+    "GET /api/contacts -> private_note status is null",
+    private_notes and private_notes[-1].get("status") in (None, ""),
+)
+check(
+    "GET /api/contacts -> private_note content matches",
+    private_notes and "VIP" in private_notes[-1]["content"],
+)
+
+# Empty payload
+r = client.post("/api/contacts/5511999990001/private-message", json={"text": ""})
+check("POST /private-message (empty) -> 400", r.status_code == 400)
+
+# ═══════════════════════════════════════════════════════════════════
 #  9. Contact send image
 # ═══════════════════════════════════════════════════════════════════
 section("Contacts — Send Image")
