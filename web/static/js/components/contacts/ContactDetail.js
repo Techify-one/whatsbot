@@ -450,7 +450,20 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               const isFailed = m._status === 'failed' || m.status === 'failed';
               const isSending = m._status === 'sending';
               const isOperator = !isUser && m.status === 'operator';
-              const senderLabel = isUser ? displayName : (isOperator ? 'Manual' : 'IA');
+
+              // In groups, the backend prefixes user content with "[Sender Name]: text"
+              // for LLM context. Strip the prefix here and use the sender name as label.
+              let displayContent = m.content;
+              let groupSender = null;
+              if (isUser && isGroup && typeof m.content === 'string') {
+                const match = m.content.match(/^\[([^\]]+)\]:\s*([\s\S]*)$/);
+                if (match) {
+                  groupSender = match[1];
+                  displayContent = match[2];
+                }
+              }
+
+              const senderLabel = isUser ? (groupSender || displayName) : (isOperator ? 'Manual' : 'IA');
               const senderColor = isUser ? '#1f7aec' : (isOperator ? '#b45309' : '#047857');
 
               return html`
@@ -470,15 +483,15 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                         onClick=${() => window.open(m._isLocalBlob ? m.media_path : '/' + m.media_path, '_blank')}
                         loading="lazy"
                       />
-                      ${m.content && m.content !== '[Imagem enviada pelo contato]' && !m.content.startsWith('[Descrição da imagem]')
-                        ? html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(m.content) }}></span>`
+                      ${displayContent && displayContent !== '[Imagem enviada pelo contato]' && !displayContent.startsWith('[Descrição da imagem]')
+                        ? html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`
                         : null}
                     ` : m.media_type === 'audio' ? html`
                       <${AudioPlayer} src=${m.media_path} isLocalBlob=${m._isLocalBlob} />
-                      ${m.content && m.content !== '[Áudio recebido]' && m.content !== '[Áudio]' && !m.content.startsWith('[Transcrição do áudio]')
-                        ? html`<span class="block text-[12px] text-wa-secondary italic" dangerouslySetInnerHTML=${{ __html: formatWhatsApp(m.content) }}></span>`
+                      ${displayContent && displayContent !== '[Áudio recebido]' && displayContent !== '[Áudio]' && !displayContent.startsWith('[Transcrição do áudio]')
+                        ? html`<span class="block text-[12px] text-wa-secondary italic" dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`
                         : null}
-                    ` : html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(m.content) }}></span>`}
+                    ` : html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`}
                     <span class="float-right ml-[8px] mt-[4px] text-[11px] leading-[15px] whitespace-nowrap text-wa-secondary">
                       ${!isUser ? (() => {
                         if (isFailed) return html`<${FailedIcon} />${!m.media_type && m._localId ? html`<${RetryIcon} onClick=${() => handleRetry(m._localId, m.content)} />` : ''}`;
