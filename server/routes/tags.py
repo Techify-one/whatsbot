@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import time
 
 from fastapi import Request
 
 from db.repositories import contact_repo
+from plugins.events import emit as emit_event
 from server.helpers import _ok, _err
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,7 @@ def register_routes(app, deps):
         if not agent_handler.tag_registry.create(name, color):
             return _err(f"Tag '{name}' já existe.")
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
+        emit_event("tag.created", {"name": name, "color": color, "ts": time.time()})
         return _ok({"name": name, "color": color})
 
     @app.put("/api/tags/{name}")
@@ -60,6 +63,11 @@ def register_routes(app, deps):
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
         final_name = new_name or name
         tag_data = agent_handler.tag_registry.get(final_name)
+        emit_event("tag.updated", {
+            "old_name": name, "name": final_name,
+            "color": tag_data["color"] if tag_data else color,
+            "ts": time.time(),
+        })
         return _ok({"name": final_name, "color": tag_data["color"] if tag_data else color})
 
     @app.delete("/api/tags/{name}")
@@ -73,6 +81,7 @@ def register_routes(app, deps):
             if name in contact.tags:
                 contact.tags.remove(name)
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
+        emit_event("tag.deleted", {"name": name, "ts": time.time()})
         return _ok({"deleted": name})
 
     @app.put("/api/contacts/{phone}/tags")
@@ -95,4 +104,7 @@ def register_routes(app, deps):
         if result is None:
             return _err("Contato não encontrado.", 404)
         await ws_manager.broadcast("contact_tags_updated", {"phone": phone, "tags": result})
+        emit_event("contact.tagged", {
+            "phone": phone, "tags": list(result), "ts": time.time(),
+        })
         return _ok({"phone": phone, "tags": result})

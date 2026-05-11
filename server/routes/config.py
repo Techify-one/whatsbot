@@ -9,6 +9,7 @@ import httpx
 
 from server.auth import generate_salt, hash_password
 from server.helpers import _ok, _err, _mask_key
+from plugins.events import emit as emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,11 @@ def register_routes(app, deps):
             "group_reply_mode", "bot_phone", "bot_name",
             "max_executions", "default_ai_enabled",
         }
+        keys_changed = []
         for key, value in body.items():
             if key in allowed_keys:
                 settings[key] = value
+                keys_changed.append(key)
 
         # Handle password set/change/remove
         if "web_password" in body:
@@ -96,6 +99,10 @@ def register_routes(app, deps):
         )
 
         await ws_manager.broadcast("config_saved", {})
+        emit_event("config.changed", {
+            "keys_changed": keys_changed,
+            "ts": time.time(),
+        })
         logger.info("Config saved.")
         return _ok({"message": "Configurações salvas!"})
 

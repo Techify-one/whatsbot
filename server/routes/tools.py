@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import time
 
 from fastapi import Request
 
 from db.repositories import tool_override_repo
+from plugins.events import emit as emit_event
 from server.helpers import _ok, _err
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,11 @@ def register_routes(app, deps):
             return _err(f"Tool '{name}' não encontrada.", 404)
         await asyncio.to_thread(agent_handler.refresh_tool_overrides)
         await ws_manager.broadcast("tools_changed", {"name": name})
+        emit_event("tool_override.changed", {
+            "tool_name": name,
+            "fields_changed": list(update_kwargs.keys()),
+            "ts": time.time(),
+        })
         items = await asyncio.to_thread(agent_handler.list_tools)
         match = next((t for t in items if t["name"] == name), None)
         return _ok(match or updated)

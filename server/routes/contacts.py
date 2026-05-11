@@ -12,6 +12,7 @@ from gowa.client import GOWASendError, extract_msg_id
 
 from db.repositories import contact_repo, message_repo
 from server.helpers import _ok, _err, parse_split_reply
+from plugins.events import emit as emit_event, apply_filter
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,15 @@ def register_routes(app, deps):
         if not message:
             return _err("Campo 'message' é obrigatório.")
 
+        # Plugin filter: allow plugins to add signature/formatting/redact to operator sends
+        filtered = await apply_filter(
+            "filter.reply.part", message,
+            {"phone": phone, "index": 0, "total": 1, "source": "operator"},
+        )
+        if filtered is None:
+            return _err("Mensagem bloqueada por plugin.", status=400)
+        message = filtered
+
         # Track sent message to filter GOWA echo-backs (must be before send)
         state.recently_sent[f"{phone}:{message[:120]}"] = time.time()
 
@@ -231,6 +241,14 @@ def register_routes(app, deps):
             "message": msg_data,
         })
 
+        # Plugin event: manual operator send
+        emit_event("message.sent", {
+            "phone": phone, "text": message, "msg_id": msg_id,
+            "media_type": None, "media_path": None,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
+
         return _ok({"message": "Mensagem enviada.", "msg_id": msg_id})
 
     async def _run_private_ai(phone: str, text: str):
@@ -274,8 +292,19 @@ def register_routes(app, deps):
         # The LLM may return a JSON array of strings when split_messages is on.
         parts = (parse_split_reply(reply_text)
                  if settings.get("split_messages", True) else [reply_text])
+        # Plugin filter on the part list (can reorder/add/remove).
+        parts = await apply_filter("filter.reply.parts", parts, {"phone": phone, "source": "private_ai"})
+        if parts is None or not parts:
+            return
 
-        for part in parts:
+        for i, part in enumerate(parts):
+            part = await apply_filter(
+                "filter.reply.part", part,
+                {"phone": phone, "index": i, "total": len(parts), "source": "private_ai"},
+            )
+            if part is None:
+                continue
+
             state.recently_sent[f"{phone}:{part[:120]}"] = time.time()
             send_failed = False
             send_error = ""
@@ -319,6 +348,12 @@ def register_routes(app, deps):
                 return
             await ws_manager.broadcast("new_message", {
                 "phone": phone, "message": msg_data,
+            })
+            emit_event("message.sent", {
+                "phone": phone, "text": part, "msg_id": msg_id,
+                "media_type": None, "media_path": None,
+                "source": "private_ai", "status": "sent",
+                "ts": time.time(),
             })
 
     @app.post("/api/contacts/{phone}/private-message")
@@ -402,6 +437,12 @@ def register_routes(app, deps):
             logger.error("[Retry] Failed to update message status for %s: %s", phone, e)
 
         state.msg_count += 1
+        emit_event("message.sent", {
+            "phone": phone, "text": message, "msg_id": msg_id,
+            "media_type": None, "media_path": None,
+            "source": "retry", "status": "sent",
+            "ts": time.time(),
+        })
         logger.info("[Retry] Resent to %s: %s", phone, message[:80])
         return _ok({"message": "Mensagem reenviada."})
 
@@ -465,6 +506,12 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
+        emit_event("message.sent", {
+            "phone": phone, "text": caption, "msg_id": msg_id,
+            "media_type": "image", "media_path": rel_path,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
         logger.info("[Send] Image sent to %s", phone)
         return _ok({"message": "Imagem enviada."})
 
@@ -526,6 +573,12 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
+        emit_event("message.sent", {
+            "phone": phone, "text": "", "msg_id": msg_id,
+            "media_type": "audio", "media_path": rel_path,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
         logger.info("[Send] Audio sent to %s", phone)
         return _ok({"message": "Áudio enviado."})
 
@@ -561,6 +614,9 @@ def register_routes(app, deps):
         await ws_manager.broadcast("contact_ai_toggled", {
             "phone": phone,
             "ai_enabled": result,
+        })
+        emit_event("contact.ai_toggled", {
+            "phone": phone, "ai_enabled": result, "ts": time.time(),
         })
         return _ok({"ai_enabled": result})
 
@@ -607,4 +663,7 @@ def register_routes(app, deps):
                 contact_repo.set_observations(contact.id, new_obs)
             return contact.info
         info = await asyncio.to_thread(_update)
+        emit_event("contact.updated", {
+            "phone": phone, "info": info, "ts": time.time(),
+        })
         return _ok(info)

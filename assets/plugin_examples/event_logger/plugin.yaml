@@ -1,0 +1,12 @@
+id: event_logger
+name: Event Logger
+version: 1.0.0
+whatsbot_api_version: ">=1.0,<2.0"
+description: Plugin de referência para o bus de eventos. Assina o wildcard "*" e loga cada evento que passa pelo WhatsBot. Útil para entender o ciclo de vida e debugar.
+author: WhatsBot
+entry:
+  events: events
+events:
+  - "*"
+permissions: []
+dependencies: []

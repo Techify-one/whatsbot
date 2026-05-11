@@ -305,6 +305,109 @@ Plugin declara `class Settings(BaseModel)` em `settings.py`. O endpoint `GET /ap
 - **Permissions**: declaradas no manifest mas **não enforced no MVP** — informativo apenas.
 - **Settings**: chaves persistem com prefixo `plugin.<id>.`. Plugin nunca grava direto na tabela `config` sem esse prefixo.
 
+### Events e Filters (bus do plugin)
+
+Plugins podem reagir a tudo que acontece no WhatsBot e modificar dados em trânsito sem editar o core. Dois mecanismos complementares (padrão WordPress: actions + filters; referências validadas em Baileys / WAHA / Home Assistant):
+
+- **Events** — broadcast fire-and-forget, paralelo. Plugin exporta `EVENT_HANDLERS` em `<plugin>/events.py` e declara `entry.events: events` no manifest. Não bloqueia o pipeline principal; exceção em um handler nunca afeta outros.
+- **Filters** — interceptive, síncrono no pipeline. Plugin exporta `FILTERS` em `<plugin>/filters.py` e declara `entry.filters: filters` no manifest. Recebe `(ctx, value)` e retorna valor modificado ou `None` pra abortar a ação envolvida. Exceção em um filter é isolada (loga + valor passa intacto ao próximo).
+
+Toggle do plugin = tudo-ou-nada: enable liga handlers e filters; disable derruba ambos no próximo restart.
+
+**Eventos GOWA / mensagem** (cobre tudo que o webhook GOWA emite):
+
+| Evento | Quando dispara | Payload chave |
+|--------|---------------|---------------|
+| `message.received` | Inbound user msg (inclui group sem @mention) | `phone, name, text, raw_text, msg_id, media_type, media_path, is_group, group_jid, individual_phone, raw` |
+| `message.sent` | Resposta IA, operator send, image/audio panel, retry, private @ia, echo do próprio celular | `phone, text, msg_id, media_type, media_path, source, status` — `source ∈ {ai, operator, private_ai, retry, echo}` |
+| `message.any` *(alias)* | Re-dispatch de `received` + `sent` com `direction: "in"\|"out"` | igual ao original + `direction` |
+| `message.reaction` | Reação emoji em mensagem | `id, phone, reaction, reacted_message_id, is_from_me` |
+| `message.edited` | Mensagem editada | `id, phone, original_message_id, body` |
+| `message.revoked` | Mensagem apagada pra todos | `id, phone, revoked_message_id, revoked_from_me, revoked_chat` |
+| `message.deleted` | Mensagem deletada do histórico | `deleted_message_id, original_content, original_sender, was_from_me` |
+| `presence.changed` | Digitando / gravando | `phone, state` (`composing`/`paused`), `media` (`text`/`audio`) |
+| `receipt.changed` | Ack delivered/read | `phone, msg_ids, status` |
+| `group.participants_changed` | Join/leave/promote/demote | `chat_id, phone, type, jids` |
+| `group.joined` | Bot adicionado ao grupo | `chat_id, phone` |
+| `call.received` | Chamada recebida (offer) | `call_id, phone, auto_rejected` |
+| `newsletter.event` | Eventos de newsletter | `subtype, raw` |
+| `chat.archived` | Arquivamento detectado no GOWA | `phone, archived` |
+| `connection.changed` | GOWA connect/disconnect/QR | `is_connected, is_logged_in, qr_required` |
+
+**Eventos internos**:
+
+| Evento | Source |
+|--------|--------|
+| `llm.before` / `llm.after` | `aprocess_message`/`process_message` antes/depois de `chat.completions.create`. `after`: `reply, tool_calls, usage, latency_ms` |
+| `tool.before` / `tool.after` | `_dispatch_tool`. `after`: `result, error, latency_ms` |
+| `contact.updated` | PUT `/api/contacts/{phone}/info` |
+| `contact.ai_toggled` | POST `/api/contacts/{phone}/toggle-ai` |
+| `contact.tagged` | PUT `/api/contacts/{phone}/tags` |
+| `tag.created` / `tag.updated` / `tag.deleted` | tag endpoints |
+| `config.changed` | PUT `/api/config` (com `keys_changed`) |
+| `tool_override.changed` | PUT `/api/tools/{name}` |
+| `plugin.loaded` / `plugin.enabled` / `plugin.disabled` / `plugin.settings.changed` | lifecycle do plugin |
+| `app.startup` / `app.shutdown` | lifespan do server |
+
+Chave especial `*` — subscrever via `EVENT_HANDLERS = {"*": fn}` recebe todo evento emitido (após os subscribers específicos). `ctx.event_name` traz o nome real.
+
+**Filters disponíveis** (ponto de modificação/cancelamento):
+
+| Filter | Local | Tipo do valor | `None` faz |
+|--------|-------|---------------|------------|
+| `filter.webhook.payload` | `/api/webhook` antes de qualquer parse | `dict` (body raw GOWA) | Webhook responde 200 sem processar |
+| `filter.message.before_save` | inbound depois do parse | `dict` (mensagem tipada com `raw`) | Mensagem ignorada (nem salva nem responde) |
+| `filter.system_prompt` | antes do LLM | `str` | System prompt vira vazio |
+| `filter.llm.messages` | antes do LLM | `list[dict]` (formato OpenAI) | LLM não é chamado |
+| `filter.llm.tools` | antes do LLM | `list[dict]` (schemas) | LLM chamado sem tools |
+| `filter.tool.args` | `_dispatch_tool` antes do executor | `{tool_name, args}` | Tool pulada |
+| `filter.tool.result` | `_dispatch_tool` depois do executor | `str` (feedback pro LLM) | LLM recebe string vazia |
+| `filter.reply.raw` | `_send_reply` antes do split | `str` | Nada é enviado |
+| `filter.reply.parts` | depois do split | `list[str]` | Nada é enviado |
+| `filter.reply.part` | cada parte antes do GOWA (vale pra send manual também) | `str` | Aquela parte é pulada |
+
+**Assinaturas**:
+
+```python
+# events.py
+def on_event(ctx: EventContext, payload: dict) -> None: ...
+async def on_event_async(ctx: EventContext, payload: dict) -> None: ...
+
+EVENT_HANDLERS = {"message.received": on_event, "llm.after": on_event_async}
+
+# filters.py
+def fn(ctx: FilterContext, value: T) -> T | None: ...
+async def fn_async(ctx: FilterContext, value: T) -> T | None: ...
+
+FILTERS = {
+    "filter.reply.part": fn,                    # priority default 100
+    "filter.message.before_save": (fn, 50),     # priority 50 — roda antes
+}
+```
+
+`ctx` expõe `handler` (AgentHandler), `plugin_id`, `plugin_db`, `event_name`/`filter_name`, `emitted_at`. Sync vai pra `asyncio.to_thread`; async é `await`-ado direto. Filter pode ser sync ou async — em paths sync (process_message) o WhatsBot usa `apply_filter_sync` que delega ao loop com `run_coroutine_threadsafe`.
+
+**Padrões de uso comuns**:
+
+- **Observador / auditor / analytics** — `EVENT_HANDLERS = {"*": log_handler}` ou eventos específicos.
+- **Anonimizar / traduzir / sanitizar inbound** — `FILTERS = {"filter.message.before_save": fn}` modifica o dict.
+- **Adicionar assinatura / formatar / mascarar PII na saída** — `FILTERS = {"filter.reply.part": fn}` modifica cada parte.
+- **Bloquear contato / palavra-chave / horário** — qualquer filter retornando `None`. Veja `assets/plugin_examples/blacklist`.
+- **Injetar contexto extra no LLM** — `FILTERS = {"filter.system_prompt": fn}` ou `filter.llm.messages` pra reescrever o histórico antes do call.
+- **Reagir a tool call específica** — `EVENT_HANDLERS = {"tool.after": fn}` com `if payload["tool_name"] == "x"`.
+- **Push em tempo real pra tela do plugin** — `plugins.context.broadcast("evento", {...})` do dentro do handler.
+
+**Boas práticas**:
+
+- Filter síncrono trava o pipeline — mantenha rápido. Persistência pesada/network vai num event handler.
+- NÃO chamar `gowa_client.send_message` dentro de handler de `message.sent` → loop infinito (a send produz outro `message.sent`).
+- Filtre por `media_type` / `source` / `is_group` no INÍCIO do handler. O bus entrega tudo.
+- Persista estado entre eventos em tabelas `plugin_<id>_*` (via `ctx.plugin_db` + `from sqlalchemy import text`), nunca em globals — não sobrevivem ao restart.
+- `payload["raw"]` carrega o payload bruto do GOWA (potencialmente grande, com base64 de áudio). Plugins que logam tudo devem cortar `raw` antes de serializar.
+- Restart obrigatório no toggle do plugin: `plugin.enabled`/`plugin.disabled` emitem ANTES do `os._exit`; o novo processo emite `plugin.loaded` no boot.
+
+Plugins de exemplo bundled em `assets/plugin_examples/`: `event_logger` (assina `*`), `auto_signature` (`filter.reply.part`), `blacklist` (`filter.message.before_save` → `None`).
+
 ### Criar um plugin novo
 
 Use o slash command `/new-plugin` no Claude Code. O comando lê os arquivos de referência, pergunta requisitos (id, telas, tools, tabelas, settings) e gera a estrutura completa em `storages/plugins/<id>/` sem tocar no core. Veja `.claude/commands/new-plugin.md`.
