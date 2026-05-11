@@ -19,6 +19,12 @@ from server.routes import logs, sandbox, config, whatsapp, websocket, usage, con
 from db.repositories import tool_override_repo
 from plugins.loader import bootstrap_initial_plugins, discover_and_load, PluginRegistry
 from plugins.context import set_runtime as _set_plugin_runtime
+from plugins.events import (
+    set_runtime as _set_events_runtime,
+    register_plugin_events,
+    register_plugin_filters,
+    emit as emit_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +93,10 @@ def create_app(
             agent_handler.register_plugin_tools(loaded.id, loaded.tools)
         if loaded.prompt_fragments:
             agent_handler.register_plugin_prompts(loaded.id, loaded.prompt_fragments)
+        if loaded.event_handlers:
+            register_plugin_events(loaded.id, loaded.event_handlers)
+        if loaded.filters:
+            register_plugin_filters(loaded.id, loaded.filters)
 
     # Tool override cleanup: drop rows for tools that no longer exist (renamed
     # in core, or belonging to a plugin that was removed). Then build the
@@ -126,8 +136,24 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        import time as _time
         state.stop_event.clear()
-        _set_plugin_runtime(ws_manager, asyncio.get_running_loop())
+        _loop = asyncio.get_running_loop()
+        _set_plugin_runtime(ws_manager, _loop)
+        _set_events_runtime(_loop, agent_handler)
+        # Lifecycle: plugins finished loading + bus is live, now broadcast
+        for loaded in registry.loaded.values():
+            emit_event("plugin.loaded", {
+                "plugin_id": loaded.id,
+                "version": loaded.manifest.version,
+                "events": list(loaded.event_handlers.keys()),
+                "filters": list(loaded.filters.keys()),
+                "ts": _time.time(),
+            })
+        emit_event("app.startup", {
+            "plugin_ids": list(registry.loaded.keys()),
+            "ts": _time.time(),
+        })
         tasks = [
             asyncio.create_task(start_gowa_task(deps)),
             asyncio.create_task(status_poll_loop(deps)),
@@ -136,6 +162,7 @@ def create_app(
         ]
         yield
         # Shutdown
+        emit_event("app.shutdown", {"ts": _time.time()})
         state.stop_event.set()
         for task in tasks:
             task.cancel()

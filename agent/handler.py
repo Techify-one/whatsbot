@@ -16,6 +16,7 @@ from agent.tools import CORE_TOOLS
 from db.repositories import message_repo, contact_repo, tool_override_repo
 from agent.execution import track_step
 from plugins.context import ToolContext, PromptContext
+from plugins.events import emit as emit_event, apply_filter, apply_filter_sync
 
 logger = logging.getLogger(__name__)
 
@@ -538,14 +539,32 @@ class AgentHandler:
 
         context_messages = contact.get_context_messages(self.max_context_messages)
 
+        system_prompt_str = self._build_system_prompt(contact)
+        system_prompt_str = await apply_filter(
+            "filter.system_prompt", system_prompt_str, {"phone": sender}
+        )
+        if system_prompt_str is None:
+            return ProcessResult(reply="")
+
         messages = [
-            {"role": "system", "content": self._build_system_prompt(contact)},
+            {"role": "system", "content": system_prompt_str},
             *context_messages,
         ]
+        messages = await apply_filter(
+            "filter.llm.messages", messages, {"phone": sender}
+        )
+        if messages is None:
+            return ProcessResult(reply="")
+
+        active_tools = [] if disable_tools else list(self._tool_schemas)
+        active_tools = await apply_filter(
+            "filter.llm.tools", active_tools, {"phone": sender}
+        )
+        if active_tools is None:
+            active_tools = []
 
         try:
             client = self._get_async_client()
-            active_tools = [] if disable_tools else self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,
@@ -559,6 +578,17 @@ class AgentHandler:
             if active_tools:
                 create_kwargs["tools"] = active_tools
                 create_kwargs["tool_choice"] = "auto"
+            _llm_t0 = time.monotonic()
+            emit_event("llm.before", {
+                "phone": sender,
+                "model": self.model,
+                "message_count": len(messages),
+                "has_tools": bool(active_tools),
+                "tool_count": len(active_tools),
+                "image_path": image_path,
+                "audio_path": audio_path,
+                "ts": time.time(),
+            })
             response = await client.chat.completions.create(**create_kwargs)
 
             self._record_usage(sender, "text", self.model, response)
@@ -582,7 +612,37 @@ class AgentHandler:
                         logger.warning("Failed to parse tool args for %s: %s", sender, e)
                         args = {}
 
+                    filtered_args = await apply_filter(
+                        "filter.tool.args",
+                        {"tool_name": tool_name, "args": args},
+                        {"phone": sender},
+                    )
+                    if filtered_args is None:
+                        # Filter vetoed this tool call.
+                        executed_tools.append({"tool": tool_name, "args": args, "skipped": True})
+                        tool_feedbacks[tc.id] = ""
+                        continue
+                    tool_name = filtered_args.get("tool_name", tool_name)
+                    args = filtered_args.get("args", args)
+
+                    _tool_t0 = time.monotonic()
+                    emit_event("tool.before", {
+                        "phone": sender, "tool_name": tool_name, "args": args,
+                        "ts": time.time(),
+                    })
                     feedback = self._dispatch_tool(contact, tool_name, args)
+                    emit_event("tool.after", {
+                        "phone": sender, "tool_name": tool_name, "args": args,
+                        "result": feedback, "error": None,
+                        "latency_ms": int((time.monotonic() - _tool_t0) * 1000),
+                        "ts": time.time(),
+                    })
+                    if feedback is not None:
+                        filtered_result = await apply_filter(
+                            "filter.tool.result", feedback,
+                            {"phone": sender, "tool_name": tool_name},
+                        )
+                        feedback = "" if filtered_result is None else filtered_result
                     if feedback:
                         tool_feedbacks[tc.id] = feedback
 
@@ -627,6 +687,23 @@ class AgentHandler:
                 updated_info = dict(contact.info)
                 updated_info["observations"] = list(updated_info.get("observations", []))
 
+            usage_dict = None
+            if usage:
+                usage_dict = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+            emit_event("llm.after", {
+                "phone": sender,
+                "model": self.model,
+                "reply": reply,
+                "tool_calls": executed_tools,
+                "usage": usage_dict,
+                "latency_ms": int((time.monotonic() - _llm_t0) * 1000),
+                "ts": time.time(),
+            })
+
             return ProcessResult(reply=reply, tool_calls=executed_tools, contact_info=updated_info)
 
         except asyncio.CancelledError:
@@ -634,6 +711,13 @@ class AgentHandler:
         except Exception as e:
             logger.error("LLM error for %s: %s", sender, e)
             track_step("error", {"error": str(e), "phase": "llm_call"}, status="error")
+            emit_event("llm.after", {
+                "phone": sender, "model": self.model,
+                "reply": "", "tool_calls": [], "usage": None,
+                "error": str(e),
+                "latency_ms": int((time.monotonic() - locals().get("_llm_t0", time.monotonic())) * 1000),
+                "ts": time.time(),
+            })
             error_msg = str(e)
             if "401" in error_msg or "unauthorized" in error_msg.lower():
                 return ProcessResult(reply="[WhatsBot] API key inválida. Verifique sua chave OpenRouter.")
@@ -668,14 +752,32 @@ class AgentHandler:
 
         context_messages = contact.get_context_messages(self.max_context_messages)
 
+        system_prompt_str = self._build_system_prompt(contact)
+        system_prompt_str = apply_filter_sync(
+            "filter.system_prompt", system_prompt_str, {"phone": sender}
+        )
+        if system_prompt_str is None:
+            return ProcessResult(reply="")
+
         messages = [
-            {"role": "system", "content": self._build_system_prompt(contact)},
+            {"role": "system", "content": system_prompt_str},
             *context_messages,
         ]
+        messages = apply_filter_sync(
+            "filter.llm.messages", messages, {"phone": sender}
+        )
+        if messages is None:
+            return ProcessResult(reply="")
+
+        active_tools = [] if disable_tools else list(self._tool_schemas)
+        active_tools = apply_filter_sync(
+            "filter.llm.tools", active_tools, {"phone": sender}
+        )
+        if active_tools is None:
+            active_tools = []
 
         try:
             client = self._get_client()
-            active_tools = [] if disable_tools else self._tool_schemas
             track_step("llm_request", {
                 "model": self.model,
                 "context_messages": len(messages) - 1,
@@ -689,6 +791,15 @@ class AgentHandler:
             if active_tools:
                 create_kwargs["tools"] = active_tools
                 create_kwargs["tool_choice"] = "auto"
+            _llm_t0 = time.monotonic()
+            emit_event("llm.before", {
+                "phone": sender, "model": self.model,
+                "message_count": len(messages),
+                "has_tools": bool(active_tools),
+                "tool_count": len(active_tools),
+                "image_path": image_path, "audio_path": audio_path,
+                "ts": time.time(),
+            })
             response = client.chat.completions.create(**create_kwargs)
 
             self._record_usage(sender, "text", self.model, response)
@@ -713,7 +824,36 @@ class AgentHandler:
                         logger.warning("Failed to parse tool args for %s: %s", sender, e)
                         args = {}
 
+                    filtered_args = apply_filter_sync(
+                        "filter.tool.args",
+                        {"tool_name": tool_name, "args": args},
+                        {"phone": sender},
+                    )
+                    if filtered_args is None:
+                        executed_tools.append({"tool": tool_name, "args": args, "skipped": True})
+                        tool_feedbacks[tc.id] = ""
+                        continue
+                    tool_name = filtered_args.get("tool_name", tool_name)
+                    args = filtered_args.get("args", args)
+
+                    _tool_t0 = time.monotonic()
+                    emit_event("tool.before", {
+                        "phone": sender, "tool_name": tool_name, "args": args,
+                        "ts": time.time(),
+                    })
                     feedback = self._dispatch_tool(contact, tool_name, args)
+                    emit_event("tool.after", {
+                        "phone": sender, "tool_name": tool_name, "args": args,
+                        "result": feedback, "error": None,
+                        "latency_ms": int((time.monotonic() - _tool_t0) * 1000),
+                        "ts": time.time(),
+                    })
+                    if feedback is not None:
+                        filtered_result = apply_filter_sync(
+                            "filter.tool.result", feedback,
+                            {"phone": sender, "tool_name": tool_name},
+                        )
+                        feedback = "" if filtered_result is None else filtered_result
                     if feedback:
                         tool_feedbacks[tc.id] = feedback
 
@@ -761,11 +901,32 @@ class AgentHandler:
                 # Deep copy observations list
                 updated_info["observations"] = list(updated_info.get("observations", []))
 
+            usage_dict = None
+            if usage:
+                usage_dict = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+            emit_event("llm.after", {
+                "phone": sender, "model": self.model, "reply": reply,
+                "tool_calls": executed_tools, "usage": usage_dict,
+                "latency_ms": int((time.monotonic() - _llm_t0) * 1000),
+                "ts": time.time(),
+            })
+
             return ProcessResult(reply=reply, tool_calls=executed_tools, contact_info=updated_info)
 
         except Exception as e:
             logger.error("LLM error for %s: %s", sender, e)
             track_step("error", {"error": str(e), "phase": "llm_call"}, status="error")
+            emit_event("llm.after", {
+                "phone": sender, "model": self.model,
+                "reply": "", "tool_calls": [], "usage": None,
+                "error": str(e),
+                "latency_ms": int((time.monotonic() - locals().get("_llm_t0", time.monotonic())) * 1000),
+                "ts": time.time(),
+            })
             error_msg = str(e)
             if "401" in error_msg or "unauthorized" in error_msg.lower():
                 return ProcessResult(reply="[WhatsBot] API key inválida. Verifique sua chave OpenRouter.")
