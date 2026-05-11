@@ -765,9 +765,12 @@ def register_routes(app, deps):
                                 if sender_jid else "")
             from_name = data.get("from_name", "") or data.get("pushName", "") or data.get("notify", "")
         else:
-            # For private chats: use sender as before
-            sender = sender_jid or chat_jid
-            phone = (sender.split("@")[0].split(":")[0] if sender else "")
+            # For private chats: the conversation key is `chat_id` (the other party in
+            # both directions). For incoming msgs `sender_jid == chat_id`; for outgoing
+            # (`is_from_me=true`) `sender_jid`/`from` is the bot itself, so using sender
+            # would route the message to the bot's own contact thread.
+            conv_jid = chat_jid or sender_jid
+            phone = (conv_jid.split("@")[0].split(":")[0] if conv_jid else "")
             individual_phone = phone
             from_name = data.get("from_name", "") or data.get("pushName", "") or data.get("notify", "")
 
