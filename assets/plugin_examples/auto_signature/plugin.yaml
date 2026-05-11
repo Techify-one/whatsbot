@@ -6,6 +6,7 @@ description: Adiciona uma assinatura no fim de cada parte de toda resposta envia
 author: WhatsBot
 entry:
   filters: filters
+  settings: settings
 filters:
   - filter.reply.part
 permissions: []

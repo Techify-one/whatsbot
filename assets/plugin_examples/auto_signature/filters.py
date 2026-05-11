@@ -1,25 +1,39 @@
 """Plugin de exemplo: adiciona assinatura ao final de cada parte da resposta.
 
-Filter interceptive — recebe o texto, devolve modificado. Vale para a IA, o
-operador manual e o fluxo @ia privado (cada um aplica ``filter.reply.part``).
+Filter interceptive — recebe o texto, devolve modificado. ``filter.reply.part``
+é disparado pela IA, pelo operador manual e pelo fluxo @ia privado; aqui
+filtramos pelo ``ctx.extras["source"]`` pra escolher o que assinar.
 
-Para customizar a frase: ajustar ``SIGNATURE`` ou converter este plugin para
-ler de settings declarativas (settings.py com BaseModel).
+Texto da assinatura e o flag de operador vêm de ``Settings`` (settings.py) e
+podem ser editados na tela /plugins → Auto Signature.
 """
 
 from __future__ import annotations
 
-SIGNATURE = "\n\n— enviado pelo bot"
+from db.repositories import config_repo
+
+_AI_SOURCES = {None, "ai", "private_ai", "retry"}
+
+
+def _load_settings() -> tuple[str, bool]:
+    signature = config_repo.get("plugin.auto_signature.signature", "*Mensagem enviada por IA*")
+    apply_to_operator = config_repo.get("plugin.auto_signature.apply_to_operator", False)
+    return str(signature or ""), bool(apply_to_operator)
 
 
 def add_signature(ctx, value: str) -> str:
-    # Filter recebe o texto exato que vai sair. Plugin só adiciona se ainda
-    # não estiver lá (idempotente — útil em flows com retry).
     if not isinstance(value, str):
         return value
-    if value.endswith(SIGNATURE):
+    signature, apply_to_operator = _load_settings()
+    if not signature.strip():
         return value
-    return value + SIGNATURE
+    source = (getattr(ctx, "extras", None) or {}).get("source")
+    if source not in _AI_SOURCES and not (source == "operator" and apply_to_operator):
+        return value
+    suffix = "\n\n" + signature
+    if value.endswith(suffix):
+        return value
+    return value + suffix
 
 
 FILTERS = {
