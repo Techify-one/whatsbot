@@ -57,17 +57,29 @@ bin/gowa.exe         → binário GOWA pré-compilado (não editar)
 
 ## Comandos
 
+Escolha o launcher pelo ambiente onde está rodando:
+
+| Ambiente | Comando | Modo | Hot-reload | Quando usar |
+|---|---|---|---|---|
+| Linux/macOS dev nativo | `./linux_start.sh` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia de desenvolvimento — edita `.py` e o worker reinicia sozinho |
+| Windows dev nativo | `windows_start.bat` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia em Windows; baixa Python automaticamente na 1ª execução |
+| Linux/macOS prod-like | `./docker_start.sh` | `docker compose up --build -d` | Não | Validar o build Docker localmente antes de push pro Coolify |
+| Coolify / servidor remoto | `git push` → deploy automático | Container do [Dockerfile](Dockerfile), `CMD python main.py` | Não | Produção — Coolify clona o repo e roda o Dockerfile |
+
+Parar o servidor:
+- Linux/macOS dev: `Ctrl+C` no terminal do `linux_start.sh` (ou `pkill -f "uvicorn server.dev"` se desanexado)
+- Windows dev: `windows_stop.bat`
+- Docker local: `docker compose down`
+
+Setup inicial (1ª vez no Linux/macOS):
+
 ```bash
-# Dev (Windows)
-run_dev.bat
-
-# Build EXE
-build.bat
-
-# Instalar deps manualmente
-pip install -r requirements.txt
-python main.py
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+./linux_start.sh
 ```
+
+O `windows_start.bat` faz o setup sozinho (baixa Python 3.12, cria venv, instala deps).
 
 ## Banco de dados
 
@@ -496,7 +508,7 @@ python -c "import uvicorn; from server.dev import app; uvicorn.run(app, host='12
 - Config auto-salva no shutdown do server (lifespan) e na primeira execução (`Settings.load`)
 - Frontend vendorizado: libs JS em `web/static/vendor/` — sem dependência de CDN em runtime
 - **Sockets fantasma no Windows**: ao reiniciar frequentemente, portas podem ficar presas em LISTENING com PIDs inexistentes. Use porta alternativa ou reinicie o PC
-- **run_dev.bat mata processos**: o bat já executa `taskkill` para gowa.exe e uvicorn.exe antes de iniciar
+- **`windows_start.bat` mata processos**: o bat já executa `taskkill` para gowa.exe e uvicorn.exe antes de iniciar. No Linux, o `linux_start.sh` faz `pkill -f bin/gowa` no fim de cada iteração do loop pra liberar a porta antes de relançar; pra parar manualmente, `pkill -f "uvicorn server.dev"` + `pkill -f bin/gowa`
 - **GOWA `/chats` limit máximo**: `GET /chats?limit=N` retorna HTTP 400 para valores acima de ~200. Usar `limit=100` como máximo seguro
 - **Archive status é chat-level**: o webhook do GOWA **não** inclui campo de archive no payload. Para saber se um chat é arquivado, consultar `GET /chats` e verificar o campo `archived` no item com o `jid` correspondente
 - **Debug do subprocess GOWA**: por padrão o stdout/stderr do GOWA vão para `DEVNULL` (sem custo). Para diagnosticar mensagens descartadas (payloads vazios, tipos não decodificados, templates HSM da Cloud API, etc.), setar a env `WHATSBOT_GOWA_DEBUG=1` (no Coolify ou outro ambiente) e reiniciar o container. Com a flag ativa, o GOWA é iniciado com `--debug=true` e os logs são gravados em `logs/gowa.log` (truncado quando passa de ~10 MB). Acessível via `GET /api/gowa-logs?limit=N` (default 500, max 5000). A resposta inclui `debug_enabled`, `log_path`, `size` e `lines[]`. Desligar setando `WHATSBOT_GOWA_DEBUG=0` ou removendo a variável + reiniciando
