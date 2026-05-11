@@ -18,6 +18,10 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
   const [recordDuration, setRecordDuration] = useState(0);
   // mode: 'reply' sends to the contact; 'private' stays in the panel only
   const [mode, setMode] = useState('reply');
+  // Private-mode AI flags. aiReadPrivate=false → AI ignores the note entirely.
+  // aiReplyInChat only shown when aiReadPrivate is on; off → AI reply stays as private note.
+  const [aiReadPrivate, setAiReadPrivate] = useState(false);
+  const [aiReplyInChat, setAiReplyInChat] = useState(true);
   // pendingMedia: { type: 'image'|'audio', file, blob, filename, previewUrl }
   const [pendingMedia, setPendingMedia] = useState(null);
   const chatRef = useRef(null);
@@ -31,7 +35,12 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages]);
 
-  useEffect(() => { setInput(''); setMode('reply'); }, [phone]);
+  useEffect(() => {
+    setInput('');
+    setMode('reply');
+    setAiReadPrivate(false);
+    setAiReplyInChat(true);
+  }, [phone]);
 
   // Auto-focus message input when opening a chat
   useEffect(() => {
@@ -125,7 +134,10 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
         }],
       } : prev);
       try {
-        const res = await sendPrivateMessage(phone, text);
+        const res = await sendPrivateMessage(phone, text, {
+          aiRead: aiReadPrivate,
+          aiReply: aiReadPrivate ? aiReplyInChat : true,
+        });
         updateMsgByLocalId(localId, () => ({ _status: res.ok ? null : 'failed' }));
       } catch (err) {
         console.error('Private send error:', err);
@@ -614,7 +626,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
           </button>
         </div>
       ` : html`
-        <div class="flex items-center px-[14px] pt-[7px] pb-[3px] bg-wa-panel shrink-0">
+        <div class="flex items-center gap-[10px] flex-wrap px-[14px] pt-[7px] pb-[3px] bg-wa-panel shrink-0">
           <div class="inline-flex items-center gap-[2px] p-[3px] rounded-full" style="background:#111b21;">
             <button
               type="button"
@@ -632,6 +644,30 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               Mensagem Privada
             </button>
           </div>
+          ${mode === 'private' ? html`
+            <label class="inline-flex items-center gap-[6px] cursor-pointer select-none" title="Quando ligado, a IA processa a mensagem privada como instrução.">
+              <input
+                type="checkbox"
+                class="sr-only peer"
+                checked=${aiReadPrivate}
+                onChange=${e => setAiReadPrivate(e.target.checked)}
+              />
+              <div class="relative w-[28px] h-[16px] bg-gray-500 rounded-full peer-checked:bg-violet-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[12px] after:w-[12px] after:transition-transform peer-checked:after:translate-x-[12px]"></div>
+              <span class="text-[12px] text-wa-secondary">IA lê</span>
+            </label>
+            ${aiReadPrivate ? html`
+              <label class="inline-flex items-center gap-[6px] cursor-pointer select-none" title="Quando ligado, a IA responde no chat do contato. Quando desligado, a resposta fica apenas como nota privada.">
+                <input
+                  type="checkbox"
+                  class="sr-only peer"
+                  checked=${aiReplyInChat}
+                  onChange=${e => setAiReplyInChat(e.target.checked)}
+                />
+                <div class="relative w-[28px] h-[16px] bg-gray-500 rounded-full peer-checked:bg-violet-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[12px] after:w-[12px] after:transition-transform peer-checked:after:translate-x-[12px]"></div>
+                <span class="text-[12px] text-wa-secondary">IA responde no chat</span>
+              </label>
+            ` : ''}
+          ` : ''}
         </div>
         <form onSubmit=${handleSend} class="flex items-center px-[10px] py-[5px] bg-wa-panel min-h-[62px] shrink-0">
           <button type="button" class="p-[8px] shrink-0" tabindex="-1">
@@ -650,7 +686,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               onInput=${handleInputChange}
               onKeyDown=${handleKeyDown}
               onPaste=${handlePaste}
-              placeholder=${mode === 'private' ? 'Mensagem privada (use @ia pra acionar a IA)' : 'Digite uma mensagem'}
+              placeholder=${mode === 'private' ? 'Mensagem privada' : 'Digite uma mensagem'}
               class="w-full block bg-wa-inputBg text-wa-text text-[15px] rounded-[8px] px-[12px] py-[9px] border border-wa-border outline-none placeholder-wa-secondary resize-none max-h-[120px] wa-scrollbar leading-[20px]"
             ></textarea>
           </div>

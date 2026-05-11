@@ -16,6 +16,9 @@ bin/gowa.exe
 start.bat
 *.bat
 
+# Linux GOWA binary (baixado/buildado localmente, não vai pro container)
+bin/gowa
+
 # Runtime data (mounted as volumes)
 storages/
 statics/

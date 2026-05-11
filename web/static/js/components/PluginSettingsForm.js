@@ -135,11 +135,20 @@ export function PluginSettingsForm({ pluginId, onSaved }) {
 
   const properties = schema.properties || {};
   const fields = Object.entries(properties);
+  const schemaDescription = (schema.description || '').trim();
 
   return html`
     <div class="space-y-4">
+      ${schemaDescription ? html`
+        <div class="text-[13px] text-wa-text bg-wa-hover border border-wa-border rounded p-3 whitespace-pre-line">
+          ${schemaDescription}
+        </div>
+      ` : null}
+
       ${fields.length === 0
-        ? html`<div class="text-wa-secondary text-sm">Plugin sem campos de configuração.</div>`
+        ? (schemaDescription
+            ? null
+            : html`<div class="text-wa-secondary text-sm">Plugin sem campos de configuração.</div>`)
         : fields.map(([name, prop]) => html`
             <div key=${name}>
               <label class="block text-[14px] font-medium text-wa-text mb-1">
@@ -161,13 +170,15 @@ export function PluginSettingsForm({ pluginId, onSaved }) {
       ${error ? html`<div class="text-red-600 text-sm">${error}</div>` : null}
       ${feedback ? html`<div class="text-green-700 text-sm">${feedback}</div>` : null}
 
-      <div class="flex gap-2">
-        <button
-          onClick=${save}
-          disabled=${saving}
-          class="px-4 py-2 bg-wa-teal text-white rounded text-[14px] disabled:opacity-50"
-        >${saving ? 'Salvando…' : 'Salvar'}</button>
-      </div>
+      ${fields.length > 0 ? html`
+        <div class="flex gap-2">
+          <button
+            onClick=${save}
+            disabled=${saving}
+            class="px-4 py-2 bg-wa-teal text-white rounded text-[14px] disabled:opacity-50"
+          >${saving ? 'Salvando…' : 'Salvar'}</button>
+        </div>
+      ` : null}
     </div>
   `;
 }

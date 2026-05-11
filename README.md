@@ -149,6 +149,24 @@ Teste a IA antes de colocar para funcionar:
 
 ---
 
+### Sistema de plugins (avançado)
+
+Quem quiser ir além do básico pode adicionar funcionalidades extras sem mexer no núcleo do programa:
+
+- **Ações novas para a IA** — ensine novas habilidades ao assistente (consultar pedidos, agendar horários, buscar no seu sistema, etc.)
+- **Filtros de mensagem** — bloqueie palavras-chave, números específicos, ou modifique mensagens antes de salvar/responder
+- **Reação a eventos** — execute algo automaticamente quando algo acontece (mensagem recebida, IA respondeu, contato novo, etc.)
+- **Telas próprias no painel** — adicione abas customizadas na interface
+- **Configurações próprias** — cada plugin pode ter sua tela de configurações
+
+Plugins ficam isolados na pasta `storages/plugins/` e podem ser instalados, ativados, desativados, exportados (`.zip`) ou removidos diretamente pela interface, sem afetar o resto do programa. Atualizar o WhatsBot **não** mexe nos seus plugins.
+
+Para criar um plugin do zero, abra o projeto no Claude Code e rode `/new-plugin` — a IA pergunta o que você quer fazer e gera tudo (código, banco, tela, configurações) automaticamente.
+
+Documentação técnica completa em [CLAUDE.md](CLAUDE.md) (Sistema de plugins, Events e Filters).
+
+---
+
 ### Privacidade e segurança
 
 - **Tudo roda no seu computador** — seus dados, conversas e informações de contatos ficam salvos em um banco de dados local na sua máquina

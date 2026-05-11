@@ -101,3 +101,40 @@ class PromptContext:
     handler: "AgentHandler"
     plugin_id: Optional[str] = None
     plugin_db: Optional[Callable[[], Any]] = None
+
+
+@dataclasses.dataclass
+class EventContext:
+    """Context passed to a plugin event handler.
+
+    The handler signature is ``def on_event(ctx: EventContext, payload: dict)``
+    (sync or ``async``). ``event_name`` echoes the dispatched event so a single
+    handler reused via ``EVENT_HANDLERS = {"*": fn}`` can branch on it.
+    ``emitted_at`` is the wall time at which the bus dispatched, useful for
+    end-to-end latency probing.
+    """
+
+    handler: Optional[Any] = None
+    plugin_id: Optional[str] = None
+    plugin_db: Optional[Callable[[], Any]] = None
+    event_name: str = ""
+    emitted_at: float = 0.0
+
+
+@dataclasses.dataclass
+class FilterContext:
+    """Context passed to a plugin filter.
+
+    A filter signature is ``def fn(ctx: FilterContext, value) -> value | None``
+    (sync or ``async``). Returning ``None`` aborts the wrapped action; any
+    other return becomes the input for the next filter in the chain.
+    ``extras`` is filled by the producer with call-site-specific data
+    (e.g. the contact phone for ``filter.message.before_save``).
+    """
+
+    handler: Optional[Any] = None
+    plugin_id: Optional[str] = None
+    plugin_db: Optional[Callable[[], Any]] = None
+    filter_name: str = ""
+    emitted_at: float = 0.0
+    extras: dict = dataclasses.field(default_factory=dict)

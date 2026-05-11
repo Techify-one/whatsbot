@@ -23,6 +23,9 @@ build/
 *.exe
 !bin/gowa.exe
 
+# Linux GOWA binary (baixado/buildado localmente por dev; não trackeado)
+bin/gowa
+
 # Docker persistent data
 data/
 

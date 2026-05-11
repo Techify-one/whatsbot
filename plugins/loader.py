@@ -37,6 +37,9 @@ class LoadedPlugin:
     package_name: str
     tools: list[tuple[dict, callable]] = dataclasses.field(default_factory=list)
     prompt_fragments: list[callable] = dataclasses.field(default_factory=list)
+    event_handlers: dict[str, callable] = dataclasses.field(default_factory=dict)
+    # Each entry is either ``fn`` or ``(fn, priority:int)``.
+    filters: dict[str, object] = dataclasses.field(default_factory=dict)
     router: object | None = None
     settings_cls: type | None = None
     static_dir: Path | None = None
@@ -144,10 +147,12 @@ def _process_one(plugin_dir: Path, registry: PluginRegistry) -> None:
         registry.loaded[manifest.id] = loaded
         plugin_repo.set_load_error(manifest.id, None)
         logger.info(
-            "Plugin %s loaded (tools=%d prompts=%d router=%s screens=%d)",
+            "Plugin %s loaded (tools=%d prompts=%d events=%d filters=%d router=%s screens=%d)",
             manifest.id,
             len(loaded.tools),
             len(loaded.prompt_fragments),
+            len(loaded.event_handlers),
+            len(loaded.filters),
             "yes" if loaded.router else "no",
             len(manifest.screens),
         )
@@ -191,6 +196,48 @@ def _load_plugin_module(
         for fn in frags:
             if callable(fn):
                 loaded.prompt_fragments.append(fn)
+
+    # events entry: module exporting EVENT_HANDLERS={"name": callable, ...}
+    events_modname = manifest.entry.get("events")
+    if events_modname:
+        events_mod = _import_submodule(package_name, events_modname, plugin_dir)
+        raw_events = getattr(events_mod, "EVENT_HANDLERS", None) or {}
+        if isinstance(raw_events, dict):
+            for name, fn in raw_events.items():
+                if callable(fn):
+                    loaded.event_handlers[str(name)] = fn
+                else:
+                    logger.warning(
+                        "Plugin %s: EVENT_HANDLERS[%r] is not callable, skipped",
+                        manifest.id, name,
+                    )
+        else:
+            logger.warning(
+                "Plugin %s: EVENT_HANDLERS must be a dict, got %s",
+                manifest.id, type(raw_events).__name__,
+            )
+
+    # filters entry: module exporting FILTERS={"filter.name": fn | (fn, priority)}
+    filters_modname = manifest.entry.get("filters")
+    if filters_modname:
+        filters_mod = _import_submodule(package_name, filters_modname, plugin_dir)
+        raw_filters = getattr(filters_mod, "FILTERS", None) or {}
+        if isinstance(raw_filters, dict):
+            for name, entry in raw_filters.items():
+                if isinstance(entry, tuple) and len(entry) == 2 and callable(entry[0]):
+                    loaded.filters[str(name)] = entry
+                elif callable(entry):
+                    loaded.filters[str(name)] = entry
+                else:
+                    logger.warning(
+                        "Plugin %s: FILTERS[%r] must be callable or (callable, int), skipped",
+                        manifest.id, name,
+                    )
+        else:
+            logger.warning(
+                "Plugin %s: FILTERS must be a dict, got %s",
+                manifest.id, type(raw_filters).__name__,
+            )
 
     # routes entry: module exporting router=APIRouter()
     routes_modname = manifest.entry.get("routes")

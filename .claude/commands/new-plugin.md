@@ -15,6 +15,8 @@ Use `AskUserQuestion` para coletar (ou inferir do `$ARGUMENTS`):
 5. **Precisa injetar conteúdo no system prompt?** (ex: cardápio). Se sim, descreva o que injetar.
 6. **Tabelas no banco**: lista de `{name, columns}` (sem o prefixo, vou adicionar). Pode ser vazia.
 7. **Settings declaráveis** (Pydantic Valves) — campos configuráveis pelo usuário na tela de settings. Pode ser vazio.
+8. **Events que o plugin observa** (fire-and-forget, paralelo): lista de nomes a assinar — ex: `message.received`, `message.sent`, `llm.after`, `tool.after`, `*` (catch-all). Pode ser vazia. Veja a tabela completa em `CLAUDE.md` → Events.
+9. **Filters que o plugin intercepta** (síncronos, podem modificar ou abortar): lista de nomes a interceptar — ex: `filter.message.before_save`, `filter.reply.part`, `filter.system_prompt`, `filter.tool.args`. Retornar `None` aborta a ação. Pode ser vazia. Veja a tabela completa em `CLAUDE.md` → Filters.
 
 Se o usuário escreveu tudo no `$ARGUMENTS`, deduza e confirme com **uma** pergunta de validação.
 
@@ -28,6 +30,10 @@ Antes de gerar qualquer arquivo, **leia** estes arquivos para seguir os padrões
 - [server/routes/tags.py](server/routes/tags.py) — padrão de APIRouter + helpers `_ok`/`_err`
 - [web/static/js/components/Dashboard.js](web/static/js/components/Dashboard.js) — padrão de componente Preact + HTM
 - [storages/plugins/lembretes/](storages/plugins/lembretes/) — plugin completo de referência (copie e adapte)
+- [assets/plugin_examples/event_logger/events.py](assets/plugin_examples/event_logger/events.py) — exemplo de `EVENT_HANDLERS` com catch-all `*` + handler específico
+- [assets/plugin_examples/blacklist/filters.py](assets/plugin_examples/blacklist/filters.py) — exemplo de filter que retorna `None` pra abortar (`filter.message.before_save`)
+- [assets/plugin_examples/auto_signature/filters.py](assets/plugin_examples/auto_signature/filters.py) — exemplo de filter que modifica valor (`filter.reply.part`)
+- [plugins/events.py](plugins/events.py) — implementação do bus (assinaturas reais, prioridade, sync/async)
 
 ## Passo 3 — Gerar a estrutura
 
@@ -41,6 +47,8 @@ storages/plugins/<id>/
 ├── prompts.py               ← se houver fragments
 ├── routes.py                ← se houver REST endpoints
 ├── settings.py              ← se houver settings
+├── events.py                ← se houver event handlers
+├── filters.py               ← se houver filters
 ├── migrations/
 │   └── 001_initial.sql
 └── static/
@@ -61,6 +69,8 @@ entry:
   prompts: prompts      # omitir se não houver
   routes: routes        # omitir se não houver
   settings: settings    # omitir se não houver
+  events: events        # omitir se não houver
+  filters: filters      # omitir se não houver
 migrations: migrations  # omitir se não houver
 screens:
   - id: <screen-id>
@@ -179,6 +189,89 @@ class Settings(BaseModel):
     field_a: str = Field(default="...", description="...")
     field_b: int = Field(default=10, description="...", ge=1)
 ```
+
+### events.py (se houver event handlers)
+
+Plugin assina eventos do bus declarando `EVENT_HANDLERS` (dict `nome -> callable`). Handler pode ser sync ou async — async é `await`-ado direto, sync vai pra `asyncio.to_thread`. Exceção em um handler é isolada (loga, não derruba outros).
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def on_message_received(ctx, payload: dict) -> None:
+    # ctx: EventContext — ctx.handler, ctx.plugin_id, ctx.plugin_db,
+    #                     ctx.event_name (importante p/ catch-all "*"), ctx.emitted_at
+    # payload: dict tipado conforme o evento (ver tabela em CLAUDE.md)
+    if payload.get("is_group"):
+        return  # filtra cedo
+    logger.info("[<id>] %s disse: %s", payload["phone"], payload["text"])
+
+async def on_llm_after(ctx, payload: dict) -> None:
+    # latency_ms, reply, tool_calls, usage
+    logger.info("[<id>] LLM levou %sms", payload.get("latency_ms"))
+
+EVENT_HANDLERS = {
+    "message.received": on_message_received,
+    "llm.after": on_llm_after,
+    # "*": catch_all,   # opcional — recebe TODO evento (após handlers específicos)
+}
+```
+
+**Eventos disponíveis** (lista completa em `CLAUDE.md`):
+
+- Mensagem: `message.received`, `message.sent`, `message.any`, `message.reaction`, `message.edited`, `message.revoked`, `message.deleted`
+- Conexão/grupo: `presence.changed`, `receipt.changed`, `group.participants_changed`, `group.joined`, `call.received`, `connection.changed`, `chat.archived`
+- LLM/tool: `llm.before`, `llm.after`, `tool.before`, `tool.after`
+- Core: `contact.updated`, `contact.ai_toggled`, `contact.tagged`, `tag.created/updated/deleted`, `config.changed`, `tool_override.changed`, `plugin.loaded/enabled/disabled/settings.changed`, `app.startup/shutdown`
+
+**Não chame `gowa_client.send_message` dentro de handler de `message.sent`** — gera loop infinito (a send produz outro `message.sent`).
+
+### filters.py (se houver filters)
+
+Plugin intercepta o pipeline declarando `FILTERS` (dict `nome -> callable` ou `(callable, priority)`). Filter recebe `(ctx, value)` e retorna `value` modificado ou `None` para **abortar** a ação envolvida. Pode ser sync ou async. Exceção é isolada (loga, valor passa intacto adiante).
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def block_keyword(ctx, msg: dict) -> dict | None:
+    # ctx: FilterContext — ctx.handler, ctx.plugin_id, ctx.plugin_db,
+    #                       ctx.filter_name, ctx.emitted_at
+    text = (msg.get("text") or "").lower()
+    if "spam" in text:
+        logger.info("[<id>] bloqueado: %s", msg.get("phone"))
+        return None  # ABORTA: mensagem não é salva nem responde
+    return msg
+
+def add_signature(ctx, part: str) -> str:
+    if not part.strip():
+        return part
+    return f"{part}\n\n— Atendimento <Plugin>"
+
+FILTERS = {
+    "filter.message.before_save": block_keyword,
+    "filter.reply.part": (add_signature, 50),  # priority 50 — roda antes do default (100)
+}
+```
+
+**Filters disponíveis** (tabela completa com tipo do `value` em `CLAUDE.md`):
+
+| Filter | `value` | `None` faz |
+|---|---|---|
+| `filter.webhook.payload` | `dict` (raw GOWA) | webhook responde 200 sem processar |
+| `filter.message.before_save` | `dict` (mensagem tipada) | mensagem ignorada |
+| `filter.system_prompt` | `str` | system prompt vazio |
+| `filter.llm.messages` | `list[dict]` | LLM não é chamado |
+| `filter.llm.tools` | `list[dict]` | LLM chamado sem tools |
+| `filter.tool.args` | `{tool_name, args}` | tool pulada |
+| `filter.tool.result` | `str` | LLM recebe string vazia |
+| `filter.reply.raw` | `str` | nada é enviado |
+| `filter.reply.parts` | `list[str]` | nada é enviado |
+| `filter.reply.part` | `str` (cada parte) | parte é pulada |
+
+**Filter síncrono trava o pipeline** — mantenha rápido. Persistência pesada / network → joga num event handler em `events.py`.
 
 ### migrations/001_initial.sql
 

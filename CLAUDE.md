@@ -57,17 +57,29 @@ bin/gowa.exe         → binário GOWA pré-compilado (não editar)
 
 ## Comandos
 
+Escolha o launcher pelo ambiente onde está rodando:
+
+| Ambiente | Comando | Modo | Hot-reload | Quando usar |
+|---|---|---|---|---|
+| Linux/macOS dev nativo | `./linux_start.sh` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia de desenvolvimento — edita `.py` e o worker reinicia sozinho |
+| Windows dev nativo | `windows_start.bat` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia em Windows; baixa Python automaticamente na 1ª execução |
+| Linux/macOS prod-like | `./docker_start.sh` | `docker compose up --build -d` | Não | Validar o build Docker localmente antes de push pro Coolify |
+| Coolify / servidor remoto | `git push` → deploy automático | Container do [Dockerfile](Dockerfile), `CMD python main.py` | Não | Produção — Coolify clona o repo e roda o Dockerfile |
+
+Parar o servidor:
+- Linux/macOS dev: `Ctrl+C` no terminal do `linux_start.sh` (ou `pkill -f "uvicorn server.dev"` se desanexado)
+- Windows dev: `windows_stop.bat`
+- Docker local: `docker compose down`
+
+Setup inicial (1ª vez no Linux/macOS):
+
 ```bash
-# Dev (Windows)
-run_dev.bat
-
-# Build EXE
-build.bat
-
-# Instalar deps manualmente
-pip install -r requirements.txt
-python main.py
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
+./linux_start.sh
 ```
+
+O `windows_start.bat` faz o setup sozinho (baixa Python 3.12, cria venv, instala deps).
 
 ## Banco de dados
 
@@ -305,6 +317,109 @@ Plugin declara `class Settings(BaseModel)` em `settings.py`. O endpoint `GET /ap
 - **Permissions**: declaradas no manifest mas **não enforced no MVP** — informativo apenas.
 - **Settings**: chaves persistem com prefixo `plugin.<id>.`. Plugin nunca grava direto na tabela `config` sem esse prefixo.
 
+### Events e Filters (bus do plugin)
+
+Plugins podem reagir a tudo que acontece no WhatsBot e modificar dados em trânsito sem editar o core. Dois mecanismos complementares (padrão WordPress: actions + filters; referências validadas em Baileys / WAHA / Home Assistant):
+
+- **Events** — broadcast fire-and-forget, paralelo. Plugin exporta `EVENT_HANDLERS` em `<plugin>/events.py` e declara `entry.events: events` no manifest. Não bloqueia o pipeline principal; exceção em um handler nunca afeta outros.
+- **Filters** — interceptive, síncrono no pipeline. Plugin exporta `FILTERS` em `<plugin>/filters.py` e declara `entry.filters: filters` no manifest. Recebe `(ctx, value)` e retorna valor modificado ou `None` pra abortar a ação envolvida. Exceção em um filter é isolada (loga + valor passa intacto ao próximo).
+
+Toggle do plugin = tudo-ou-nada: enable liga handlers e filters; disable derruba ambos no próximo restart.
+
+**Eventos GOWA / mensagem** (cobre tudo que o webhook GOWA emite):
+
+| Evento | Quando dispara | Payload chave |
+|--------|---------------|---------------|
+| `message.received` | Inbound user msg (inclui group sem @mention) | `phone, name, text, raw_text, msg_id, media_type, media_path, is_group, group_jid, individual_phone, raw` |
+| `message.sent` | Resposta IA, operator send, image/audio panel, retry, private @ia, echo do próprio celular | `phone, text, msg_id, media_type, media_path, source, status` — `source ∈ {ai, operator, private_ai, retry, echo}` |
+| `message.any` *(alias)* | Re-dispatch de `received` + `sent` com `direction: "in"\|"out"` | igual ao original + `direction` |
+| `message.reaction` | Reação emoji em mensagem | `id, phone, reaction, reacted_message_id, is_from_me` |
+| `message.edited` | Mensagem editada | `id, phone, original_message_id, body` |
+| `message.revoked` | Mensagem apagada pra todos | `id, phone, revoked_message_id, revoked_from_me, revoked_chat` |
+| `message.deleted` | Mensagem deletada do histórico | `deleted_message_id, original_content, original_sender, was_from_me` |
+| `presence.changed` | Digitando / gravando | `phone, state` (`composing`/`paused`), `media` (`text`/`audio`) |
+| `receipt.changed` | Ack delivered/read | `phone, msg_ids, status` |
+| `group.participants_changed` | Join/leave/promote/demote | `chat_id, phone, type, jids` |
+| `group.joined` | Bot adicionado ao grupo | `chat_id, phone` |
+| `call.received` | Chamada recebida (offer) | `call_id, phone, auto_rejected` |
+| `newsletter.event` | Eventos de newsletter | `subtype, raw` |
+| `chat.archived` | Arquivamento detectado no GOWA | `phone, archived` |
+| `connection.changed` | GOWA connect/disconnect/QR | `is_connected, is_logged_in, qr_required` |
+
+**Eventos internos**:
+
+| Evento | Source |
+|--------|--------|
+| `llm.before` / `llm.after` | `aprocess_message`/`process_message` antes/depois de `chat.completions.create`. `after`: `reply, tool_calls, usage, latency_ms` |
+| `tool.before` / `tool.after` | `_dispatch_tool`. `after`: `result, error, latency_ms` |
+| `contact.updated` | PUT `/api/contacts/{phone}/info` |
+| `contact.ai_toggled` | POST `/api/contacts/{phone}/toggle-ai` |
+| `contact.tagged` | PUT `/api/contacts/{phone}/tags` |
+| `tag.created` / `tag.updated` / `tag.deleted` | tag endpoints |
+| `config.changed` | PUT `/api/config` (com `keys_changed`) |
+| `tool_override.changed` | PUT `/api/tools/{name}` |
+| `plugin.loaded` / `plugin.enabled` / `plugin.disabled` / `plugin.settings.changed` | lifecycle do plugin |
+| `app.startup` / `app.shutdown` | lifespan do server |
+
+Chave especial `*` — subscrever via `EVENT_HANDLERS = {"*": fn}` recebe todo evento emitido (após os subscribers específicos). `ctx.event_name` traz o nome real.
+
+**Filters disponíveis** (ponto de modificação/cancelamento):
+
+| Filter | Local | Tipo do valor | `None` faz |
+|--------|-------|---------------|------------|
+| `filter.webhook.payload` | `/api/webhook` antes de qualquer parse | `dict` (body raw GOWA) | Webhook responde 200 sem processar |
+| `filter.message.before_save` | inbound depois do parse | `dict` (mensagem tipada com `raw`) | Mensagem ignorada (nem salva nem responde) |
+| `filter.system_prompt` | antes do LLM | `str` | System prompt vira vazio |
+| `filter.llm.messages` | antes do LLM | `list[dict]` (formato OpenAI) | LLM não é chamado |
+| `filter.llm.tools` | antes do LLM | `list[dict]` (schemas) | LLM chamado sem tools |
+| `filter.tool.args` | `_dispatch_tool` antes do executor | `{tool_name, args}` | Tool pulada |
+| `filter.tool.result` | `_dispatch_tool` depois do executor | `str` (feedback pro LLM) | LLM recebe string vazia |
+| `filter.reply.raw` | `_send_reply` antes do split | `str` | Nada é enviado |
+| `filter.reply.parts` | depois do split | `list[str]` | Nada é enviado |
+| `filter.reply.part` | cada parte antes do GOWA (vale pra send manual também) | `str` | Aquela parte é pulada |
+
+**Assinaturas**:
+
+```python
+# events.py
+def on_event(ctx: EventContext, payload: dict) -> None: ...
+async def on_event_async(ctx: EventContext, payload: dict) -> None: ...
+
+EVENT_HANDLERS = {"message.received": on_event, "llm.after": on_event_async}
+
+# filters.py
+def fn(ctx: FilterContext, value: T) -> T | None: ...
+async def fn_async(ctx: FilterContext, value: T) -> T | None: ...
+
+FILTERS = {
+    "filter.reply.part": fn,                    # priority default 100
+    "filter.message.before_save": (fn, 50),     # priority 50 — roda antes
+}
+```
+
+`ctx` expõe `handler` (AgentHandler), `plugin_id`, `plugin_db`, `event_name`/`filter_name`, `emitted_at`. Sync vai pra `asyncio.to_thread`; async é `await`-ado direto. Filter pode ser sync ou async — em paths sync (process_message) o WhatsBot usa `apply_filter_sync` que delega ao loop com `run_coroutine_threadsafe`.
+
+**Padrões de uso comuns**:
+
+- **Observador / auditor / analytics** — `EVENT_HANDLERS = {"*": log_handler}` ou eventos específicos.
+- **Anonimizar / traduzir / sanitizar inbound** — `FILTERS = {"filter.message.before_save": fn}` modifica o dict.
+- **Adicionar assinatura / formatar / mascarar PII na saída** — `FILTERS = {"filter.reply.part": fn}` modifica cada parte.
+- **Bloquear contato / palavra-chave / horário** — qualquer filter retornando `None`. Veja `assets/plugin_examples/blacklist`.
+- **Injetar contexto extra no LLM** — `FILTERS = {"filter.system_prompt": fn}` ou `filter.llm.messages` pra reescrever o histórico antes do call.
+- **Reagir a tool call específica** — `EVENT_HANDLERS = {"tool.after": fn}` com `if payload["tool_name"] == "x"`.
+- **Push em tempo real pra tela do plugin** — `plugins.context.broadcast("evento", {...})` do dentro do handler.
+
+**Boas práticas**:
+
+- Filter síncrono trava o pipeline — mantenha rápido. Persistência pesada/network vai num event handler.
+- NÃO chamar `gowa_client.send_message` dentro de handler de `message.sent` → loop infinito (a send produz outro `message.sent`).
+- Filtre por `media_type` / `source` / `is_group` no INÍCIO do handler. O bus entrega tudo.
+- Persista estado entre eventos em tabelas `plugin_<id>_*` (via `ctx.plugin_db` + `from sqlalchemy import text`), nunca em globals — não sobrevivem ao restart.
+- `payload["raw"]` carrega o payload bruto do GOWA (potencialmente grande, com base64 de áudio). Plugins que logam tudo devem cortar `raw` antes de serializar.
+- Restart obrigatório no toggle do plugin: `plugin.enabled`/`plugin.disabled` emitem ANTES do `os._exit`; o novo processo emite `plugin.loaded` no boot.
+
+Plugins de exemplo bundled em `assets/plugin_examples/`: `event_logger` (assina `*`), `auto_signature` (`filter.reply.part`), `blacklist` (`filter.message.before_save` → `None`).
+
 ### Criar um plugin novo
 
 Use o slash command `/new-plugin` no Claude Code. O comando lê os arquivos de referência, pergunta requisitos (id, telas, tools, tabelas, settings) e gera a estrutura completa em `storages/plugins/<id>/` sem tocar no core. Veja `.claude/commands/new-plugin.md`.
@@ -393,7 +508,7 @@ python -c "import uvicorn; from server.dev import app; uvicorn.run(app, host='12
 - Config auto-salva no shutdown do server (lifespan) e na primeira execução (`Settings.load`)
 - Frontend vendorizado: libs JS em `web/static/vendor/` — sem dependência de CDN em runtime
 - **Sockets fantasma no Windows**: ao reiniciar frequentemente, portas podem ficar presas em LISTENING com PIDs inexistentes. Use porta alternativa ou reinicie o PC
-- **run_dev.bat mata processos**: o bat já executa `taskkill` para gowa.exe e uvicorn.exe antes de iniciar
+- **`windows_start.bat` mata processos**: o bat já executa `taskkill` para gowa.exe e uvicorn.exe antes de iniciar. No Linux, o `linux_start.sh` faz `pkill -f bin/gowa` no fim de cada iteração do loop pra liberar a porta antes de relançar; pra parar manualmente, `pkill -f "uvicorn server.dev"` + `pkill -f bin/gowa`
 - **GOWA `/chats` limit máximo**: `GET /chats?limit=N` retorna HTTP 400 para valores acima de ~200. Usar `limit=100` como máximo seguro
 - **Archive status é chat-level**: o webhook do GOWA **não** inclui campo de archive no payload. Para saber se um chat é arquivado, consultar `GET /chats` e verificar o campo `archived` no item com o `jid` correspondente
 - **Debug do subprocess GOWA**: por padrão o stdout/stderr do GOWA vão para `DEVNULL` (sem custo). Para diagnosticar mensagens descartadas (payloads vazios, tipos não decodificados, templates HSM da Cloud API, etc.), setar a env `WHATSBOT_GOWA_DEBUG=1` (no Coolify ou outro ambiente) e reiniciar o container. Com a flag ativa, o GOWA é iniciado com `--debug=true` e os logs são gravados em `logs/gowa.log` (truncado quando passa de ~10 MB). Acessível via `GET /api/gowa-logs?limit=N` (default 500, max 5000). A resposta inclui `debug_enabled`, `log_path`, `size` e `lines[]`. Desligar setando `WHATSBOT_GOWA_DEBUG=0` ou removendo a variável + reiniciando

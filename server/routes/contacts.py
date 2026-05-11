@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import re
 import time
 from pathlib import Path
 
@@ -12,10 +11,9 @@ from gowa.client import GOWASendError, extract_msg_id
 
 from db.repositories import contact_repo, message_repo
 from server.helpers import _ok, _err, parse_split_reply
+from plugins.events import emit as emit_event, apply_filter
 
 logger = logging.getLogger(__name__)
-
-_AT_IA_RE = re.compile(r"(?i)(^|\s)@ia\b")
 
 
 def register_routes(app, deps):
@@ -180,6 +178,15 @@ def register_routes(app, deps):
         if not message:
             return _err("Campo 'message' é obrigatório.")
 
+        # Plugin filter: allow plugins to add signature/formatting/redact to operator sends
+        filtered = await apply_filter(
+            "filter.reply.part", message,
+            {"phone": phone, "index": 0, "total": 1, "source": "operator"},
+        )
+        if filtered is None:
+            return _err("Mensagem bloqueada por plugin.", status=400)
+        message = filtered
+
         # Track sent message to filter GOWA echo-backs (must be before send)
         state.recently_sent[f"{phone}:{message[:120]}"] = time.time()
 
@@ -231,15 +238,25 @@ def register_routes(app, deps):
             "message": msg_data,
         })
 
+        # Plugin event: manual operator send
+        emit_event("message.sent", {
+            "phone": phone, "text": message, "msg_id": msg_id,
+            "media_type": None, "media_path": None,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
+
         return _ok({"message": "Mensagem enviada.", "msg_id": msg_id})
 
-    async def _run_private_ai(phone: str, text: str):
-        """Process a private message that mentions @ia.
+    async def _run_private_ai(phone: str, text: str, reply_in_chat: bool = True):
+        """Process a private message via the LLM.
 
-        Calls the LLM with the conversation context (including prior private notes)
-        and full tool access. Any tool calls (e.g. reminder_create, save_contact_info)
-        run normally and their cards are broadcast to the panel. The reply text is
-        then sent to the contact via WhatsApp as a regular assistant message.
+        Triggered by the operator's "IA lê" toggle on the private-message panel.
+        Tool calls run normally and their cards are broadcast to the panel.
+
+        If `reply_in_chat` is True, the LLM reply is sent to the contact as a
+        regular assistant message. If False, each reply part is saved as a
+        private note (stays only in the panel).
         """
         try:
             result = await agent_handler.aprocess_message(
@@ -255,7 +272,7 @@ def register_routes(app, deps):
             await ws_manager.broadcast("new_message", {
                 "phone": phone,
                 "message": {"role": "error",
-                            "content": f"Erro ao processar @ia: {e}",
+                            "content": f"Erro ao processar IA: {e}",
                             "ts": time.time()},
             })
             return
@@ -274,8 +291,40 @@ def register_routes(app, deps):
         # The LLM may return a JSON array of strings when split_messages is on.
         parts = (parse_split_reply(reply_text)
                  if settings.get("split_messages", True) else [reply_text])
+        filter_source = "private_ai" if reply_in_chat else "private_ai_note"
+        # Plugin filter on the part list (can reorder/add/remove).
+        parts = await apply_filter("filter.reply.parts", parts, {"phone": phone, "source": filter_source})
+        if parts is None or not parts:
+            return
 
-        for part in parts:
+        for i, part in enumerate(parts):
+            part = await apply_filter(
+                "filter.reply.part", part,
+                {"phone": phone, "index": i, "total": len(parts), "source": filter_source},
+            )
+            if part is None:
+                continue
+
+            if not reply_in_chat:
+                # AI reply stays in the panel as a private note.
+                try:
+                    def _save_note(p=part):
+                        contact = agent_handler._get_contact(phone)
+                        contact.add_message("private_note", p)
+                    await asyncio.to_thread(_save_note)
+                except Exception as e:
+                    logger.error("[PrivateAI] failed to save private note: %s", e)
+                await ws_manager.broadcast("new_message", {
+                    "phone": phone,
+                    "message": {
+                        "role": "private_note",
+                        "content": part,
+                        "ts": time.time(),
+                        "status": None,
+                    },
+                })
+                continue
+
             state.recently_sent[f"{phone}:{part[:120]}"] = time.time()
             send_failed = False
             send_error = ""
@@ -320,16 +369,27 @@ def register_routes(app, deps):
             await ws_manager.broadcast("new_message", {
                 "phone": phone, "message": msg_data,
             })
+            emit_event("message.sent", {
+                "phone": phone, "text": part, "msg_id": msg_id,
+                "media_type": None, "media_path": None,
+                "source": "private_ai", "status": "sent",
+                "ts": time.time(),
+            })
 
     @app.post("/api/contacts/{phone}/private-message")
     async def send_private_message(phone: str, body: dict):
         """Save a message that stays in the panel — never delivered to the contact.
 
-        If the text mentions `@ia`, kicks off LLM processing in a background task.
+        AI processing is triggered when the operator sets `ai_read=true` (UI
+        toggle "IA lê"). `ai_reply` (default true) controls whether the AI
+        reply goes to the WhatsApp chat or stays as a private note.
         """
         text = (body.get("text") or "").strip()
         if not text:
             return _err("Campo 'text' é obrigatório.")
+
+        ai_read = bool(body.get("ai_read", False))
+        ai_reply = bool(body.get("ai_reply", True))
 
         try:
             def _save():
@@ -350,11 +410,11 @@ def register_routes(app, deps):
             },
         })
 
-        if _AT_IA_RE.search(text):
-            asyncio.create_task(_run_private_ai(phone, text))
+        if ai_read:
+            asyncio.create_task(_run_private_ai(phone, text, reply_in_chat=ai_reply))
 
-        logger.info("[Private] Saved private note for %s (@ia=%s): %s",
-                    phone, bool(_AT_IA_RE.search(text)), text[:80])
+        logger.info("[Private] Saved private note for %s (ai_read=%s, ai_reply=%s): %s",
+                    phone, ai_read, ai_reply, text[:80])
         return _ok({"message": "Mensagem privada salva."})
 
     @app.post("/api/contacts/{phone}/retry-send")
@@ -402,6 +462,12 @@ def register_routes(app, deps):
             logger.error("[Retry] Failed to update message status for %s: %s", phone, e)
 
         state.msg_count += 1
+        emit_event("message.sent", {
+            "phone": phone, "text": message, "msg_id": msg_id,
+            "media_type": None, "media_path": None,
+            "source": "retry", "status": "sent",
+            "ts": time.time(),
+        })
         logger.info("[Retry] Resent to %s: %s", phone, message[:80])
         return _ok({"message": "Mensagem reenviada."})
 
@@ -465,6 +531,12 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
+        emit_event("message.sent", {
+            "phone": phone, "text": caption, "msg_id": msg_id,
+            "media_type": "image", "media_path": rel_path,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
         logger.info("[Send] Image sent to %s", phone)
         return _ok({"message": "Imagem enviada."})
 
@@ -526,6 +598,12 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
+        emit_event("message.sent", {
+            "phone": phone, "text": "", "msg_id": msg_id,
+            "media_type": "audio", "media_path": rel_path,
+            "source": "operator", "status": "operator",
+            "ts": time.time(),
+        })
         logger.info("[Send] Audio sent to %s", phone)
         return _ok({"message": "Áudio enviado."})
 
@@ -561,6 +639,9 @@ def register_routes(app, deps):
         await ws_manager.broadcast("contact_ai_toggled", {
             "phone": phone,
             "ai_enabled": result,
+        })
+        emit_event("contact.ai_toggled", {
+            "phone": phone, "ai_enabled": result, "ts": time.time(),
         })
         return _ok({"ai_enabled": result})
 
@@ -607,4 +688,7 @@ def register_routes(app, deps):
                 contact_repo.set_observations(contact.id, new_obs)
             return contact.info
         info = await asyncio.to_thread(_update)
+        emit_event("contact.updated", {
+            "phone": phone, "info": info, "ts": time.time(),
+        })
         return _ok(info)

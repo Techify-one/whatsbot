@@ -338,7 +338,14 @@ function App({ onLogout, hasPassword }) {
                     </div>`
                   : tab === 'executions'
                     ? html`<div class="max-w-5xl mx-auto p-4 h-full">
-                        <${PageHeader} title="Execuções" onBack=${() => setTab('contacts')} />
+                        <${PageHeader} title="Execuções" onBack=${() => {
+                          if (window.location.pathname.match(/^\/executions\/\d+$/)) {
+                            history.pushState(null, '', '/executions');
+                            window.dispatchEvent(new PopStateEvent('popstate'));
+                          } else {
+                            setTab('contacts');
+                          }
+                        }} />
                         <${Executions} />
                       </div>`
                     : html`<div class="max-w-5xl mx-auto p-4">

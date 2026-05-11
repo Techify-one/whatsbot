@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from db.repositories import contact_repo
+from plugins.events import emit as emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ async def status_poll_loop(deps):
     ws_manager = deps.ws_manager
     state = deps.state
     settings = deps.settings
+    last_connected: bool | None = None
+    last_qr_required: bool | None = None
     while not state.stop_event.is_set():
         try:
             connected = await asyncio.to_thread(gowa_client.is_connected)
@@ -55,6 +58,19 @@ async def status_poll_loop(deps):
                 "bot_phone": state.bot_phone,
                 "bot_name": state.bot_name,
             })
+            # Plugin event: connection state transitions only (not every poll).
+            qr_required = bool(state.qr_data is not None and not connected)
+            if (last_connected, last_qr_required) != (connected, qr_required):
+                emit_event("connection.changed", {
+                    "is_connected": bool(connected),
+                    "is_logged_in": bool(connected),  # GOWA conflates these
+                    "qr_required": qr_required,
+                    "bot_phone": state.bot_phone,
+                    "bot_name": state.bot_name,
+                    "ts": time.time(),
+                })
+                last_connected = connected
+                last_qr_required = qr_required
             # Auto-reply is handled via GOWA webhook (POST /api/webhook)
             state.auto_reply_running = connected and settings.get("auto_reply", True)
             # Populate bot identity for @mention detection in groups

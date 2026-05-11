@@ -278,7 +278,7 @@ r = client.post("/api/contacts/5511999990001/retry-send", json={"message": ""})
 check("POST /retry-send (empty) -> 400", r.status_code == 400)
 
 # ═══════════════════════════════════════════════════════════════════
-#  8b. Private message (panel-only) — no @ia
+#  8b. Private message (panel-only) — no AI trigger
 # ═══════════════════════════════════════════════════════════════════
 section("Contacts — Private Message")
 

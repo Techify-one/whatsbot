@@ -37,6 +37,12 @@ class PluginManifest:
     screens: list[dict] = dataclasses.field(default_factory=list)
     permissions: list[str] = dataclasses.field(default_factory=list)
     dependencies: list[str] = dataclasses.field(default_factory=list)
+    # Documentation-only declarations. The loader does not enforce that the
+    # plugin actually exports a handler for every event/filter listed here;
+    # they exist so ``/api/plugins/manifest`` can show which surface the plugin
+    # touches.
+    events: list[str] = dataclasses.field(default_factory=list)
+    filters: list[str] = dataclasses.field(default_factory=list)
     raw: dict = dataclasses.field(default_factory=dict)
 
     def to_public_dict(self) -> dict:
@@ -51,6 +57,8 @@ class PluginManifest:
             "screens": self.screens,
             "permissions": self.permissions,
             "dependencies": self.dependencies,
+            "events": self.events,
+            "filters": self.filters,
         }
 
 
@@ -132,6 +140,8 @@ def _build_manifest(data: dict, plugin_dir: Path) -> PluginManifest:
 
     permissions = [str(p) for p in (data.get("permissions") or []) if isinstance(p, str)]
     deps = [str(d) for d in (data.get("dependencies") or []) if isinstance(d, str)]
+    events_declared = [str(e) for e in (data.get("events") or []) if isinstance(e, str)]
+    filters_declared = [str(f) for f in (data.get("filters") or []) if isinstance(f, str)]
 
     return PluginManifest(
         id=pid,
@@ -145,6 +155,8 @@ def _build_manifest(data: dict, plugin_dir: Path) -> PluginManifest:
         screens=cleaned_screens,
         permissions=permissions,
         dependencies=deps,
+        events=events_declared,
+        filters=filters_declared,
         raw=data,
     )
 

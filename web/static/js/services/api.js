@@ -116,8 +116,11 @@ export async function retrySend(phone, message) {
   return request('POST', `/api/contacts/${encodeURIComponent(phone)}/retry-send`, { message });
 }
 
-export async function sendPrivateMessage(phone, text) {
-  return request('POST', `/api/contacts/${encodeURIComponent(phone)}/private-message`, { text });
+export async function sendPrivateMessage(phone, text, opts = {}) {
+  const body = { text };
+  if (opts.aiRead !== undefined) body.ai_read = !!opts.aiRead;
+  if (opts.aiReply !== undefined) body.ai_reply = !!opts.aiReply;
+  return request('POST', `/api/contacts/${encodeURIComponent(phone)}/private-message`, body);
 }
 
 export async function markAsRead(phone) {

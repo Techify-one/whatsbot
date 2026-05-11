@@ -53,25 +53,19 @@ function StatusBadge({ status }) {
   return html`<span class="inline-block px-2 py-0.5 text-xs font-medium rounded ${badge.bg} ${badge.text}">${badge.label}</span>`;
 }
 
-function JsonBlock({ data }) {
-  const [expanded, setExpanded] = useState(false);
+function JsonBlock({ data, expandSignal }) {
+  const [expanded, setExpanded] = useState(expandSignal ? expandSignal.value : true);
+  useEffect(() => {
+    if (expandSignal) setExpanded(expandSignal.value);
+  }, [expandSignal]);
   if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) return null;
+  if (!expanded) return null;
 
   const json = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-  const lines = json.split('\n');
-  const isLong = lines.length > 3;
 
   return html`
     <div class="mt-1">
-      ${isLong ? html`
-        <button
-          onClick=${() => setExpanded(!expanded)}
-          class="text-xs text-wa-secondary hover:text-wa-teal transition-colors mb-1"
-        >
-          ${expanded ? 'Recolher' : 'Expandir dados'}
-        </button>
-      ` : null}
-      <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto ${isLong && !expanded ? 'max-h-[60px] overflow-hidden' : ''}">${json}</pre>
+      <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto">${json}</pre>
     </div>
   `;
 }
@@ -81,6 +75,8 @@ function JsonBlock({ data }) {
 function ExecutionDetail({ execution, onBack }) {
   const baseTsMs = execution.started_at * 1000;
   const steps = execution.steps || [];
+  const [expandSignal, setExpandSignal] = useState({ value: true, ver: 0 });
+  const toggleAll = () => setExpandSignal(s => ({ value: !s.value, ver: s.ver + 1 }));
 
   return html`
     <div class="flex flex-col h-full">
@@ -104,6 +100,13 @@ function ExecutionDetail({ execution, onBack }) {
             ${execution.duration_ms != null ? ` · ${formatDuration(execution.duration_ms)}` : ''}
           </div>
         </div>
+        ${steps.length > 0 ? html`
+          <button
+            onClick=${toggleAll}
+            class="px-2 py-1 text-xs text-wa-secondary hover:text-wa-teal hover:bg-wa-hover rounded transition-colors"
+            title=${expandSignal.value ? 'Recolher todos os eventos' : 'Expandir todos os eventos'}
+          >${expandSignal.value ? 'Recolher tudo' : 'Expandir tudo'}</button>
+        ` : null}
       </div>
 
       <!-- Timeline -->
@@ -133,7 +136,7 @@ function ExecutionDetail({ execution, onBack }) {
                     <${StepBadge} type=${step.step_type} />
                     ${isError ? html`<span class="text-xs text-red-600 font-medium">ERRO</span>` : null}
                   </div>
-                  <${JsonBlock} data=${step.data} />
+                  <${JsonBlock} data=${step.data} expandSignal=${expandSignal} />
                 </div>
               </div>
             `;

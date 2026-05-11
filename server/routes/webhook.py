@@ -13,6 +13,7 @@ from gowa.client import GOWASendError, extract_msg_id
 from db.repositories import contact_repo, message_repo
 from server.execution import astart_execution, aend_execution, atrack_step, prune_executions
 from server.helpers import _ok, parse_split_reply
+from plugins.events import emit as emit_event, apply_filter
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,24 @@ def register_routes(app, deps):
 
     async def _send_reply(phone: str, reply: str):
         """Send reply (possibly split into multiple parts) and broadcast."""
+        # Plugin filter: full raw reply before split
+        reply = await apply_filter("filter.reply.raw", reply, {"phone": phone})
+        if reply is None:
+            logger.info("[Batch] reply for %s aborted by filter.reply.raw", phone)
+            return
+
         split_enabled = settings.get("split_messages", True)
 
         if split_enabled:
             parts = parse_split_reply(reply)
         else:
             parts = [reply]
+
+        # Plugin filter: list of parts (can add/remove/reorder)
+        parts = await apply_filter("filter.reply.parts", parts, {"phone": phone})
+        if parts is None or not parts:
+            logger.info("[Batch] reply for %s aborted by filter.reply.parts", phone)
+            return
 
         # Initial response delay (simulates typing)
         delay_min = settings.get("response_delay_min", 1.0)
@@ -75,6 +88,15 @@ def register_routes(app, deps):
 
         sent_parts = []  # collect (part_text, msg_id) for saving after send
         for i, part in enumerate(parts):
+            # Plugin filter: each part right before send (signature, formatting, redact)
+            part = await apply_filter(
+                "filter.reply.part", part,
+                {"phone": phone, "index": i, "total": len(parts)},
+            )
+            if part is None:
+                logger.info("[Batch] part %d for %s skipped by filter.reply.part", i + 1, phone)
+                continue
+
             if i > 0:
                 # Inter-message delay with ±0.5s variation
                 base_delay = settings.get("split_message_delay", 2.0)
@@ -114,6 +136,14 @@ def register_routes(app, deps):
                 "phone": phone,
                 "message": {"role": "assistant", "content": part, "ts": time.time(),
                             "status": "sent", "msg_id": part_msg_id},
+            })
+
+            # Plugin event: AI reply leg
+            emit_event("message.sent", {
+                "phone": phone, "text": part, "msg_id": part_msg_id,
+                "media_type": None, "media_path": None,
+                "source": "ai", "status": "sent",
+                "ts": time.time(),
             })
 
         # Save each part as a separate message to preserve split across page refresh
@@ -532,6 +562,12 @@ def register_routes(app, deps):
     @app.post("/api/webhook")
     async def webhook(body: dict):
         """Receive real-time message events from GOWA webhook."""
+        # Plugin filter: full webhook payload before any parsing.
+        # A plugin can rewrite media paths, drop messages or normalize fields.
+        body = await apply_filter("filter.webhook.payload", body, {})
+        if body is None:
+            return _ok({"status": "filtered_out"})
+
         event = body.get("event", "")
         # GOWA wraps message data inside "payload"
         data = body.get("payload", body.get("data", body))
@@ -542,6 +578,110 @@ def register_routes(app, deps):
             "event": event,
             "payload": data,
         })
+
+        # Helper to extract a clean phone from a JID-ish string.
+        def _phone_from_jid(jid: str) -> str:
+            if not isinstance(jid, str) or not jid:
+                return ""
+            return jid.split("@")[0].split(":")[0]
+
+        # ── Events GOWA emite que historicamente o WhatsBot ignorava ─────
+        # Cada um vira um plugin event com payload tipado. O bot não age
+        # localmente nestes (nenhum LLM, nenhum save), só fan-outa pros plugins.
+
+        if event == "message.reaction":
+            emit_event("message.reaction", {
+                "id": data.get("id", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
+                "from": _phone_from_jid(data.get("from", "")),
+                "reaction": data.get("reaction", ""),
+                "reacted_message_id": data.get("reacted_message_id", ""),
+                "is_from_me": bool(data.get("is_from_me", False)),
+                "ts": data.get("timestamp") or time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "reaction"})
+
+        if event == "message.edited":
+            emit_event("message.edited", {
+                "id": data.get("id", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
+                "from": _phone_from_jid(data.get("from", "")),
+                "original_message_id": data.get("original_message_id", ""),
+                "body": data.get("body", "") or data.get("content", ""),
+                "is_from_me": bool(data.get("is_from_me", False)),
+                "ts": data.get("timestamp") or time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "edited"})
+
+        if event == "message.revoked":
+            emit_event("message.revoked", {
+                "id": data.get("id", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
+                "from": _phone_from_jid(data.get("from", "")),
+                "revoked_message_id": data.get("revoked_message_id", ""),
+                "revoked_from_me": bool(data.get("revoked_from_me", False)),
+                "revoked_chat": data.get("revoked_chat", ""),
+                "ts": data.get("timestamp") or time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "revoked"})
+
+        if event == "message.deleted":
+            emit_event("message.deleted", {
+                "deleted_message_id": data.get("deleted_message_id", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
+                "from": _phone_from_jid(data.get("from", "")),
+                "original_content": data.get("original_content", ""),
+                "original_sender": data.get("original_sender", ""),
+                "original_timestamp": data.get("original_timestamp"),
+                "was_from_me": bool(data.get("was_from_me", False)),
+                "ts": data.get("timestamp") or time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "deleted"})
+
+        if event == "group.participants":
+            emit_event("group.participants_changed", {
+                "chat_id": data.get("chat_id", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "")),
+                "type": data.get("type", ""),
+                "jids": data.get("jids", []),
+                "ts": time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "group_participants"})
+
+        if event == "group.joined":
+            emit_event("group.joined", {
+                "chat_id": data.get("chat_id", "") or data.get("group_jid", ""),
+                "phone": _phone_from_jid(data.get("chat_id", "") or data.get("group_jid", "")),
+                "ts": time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "group_joined"})
+
+        if event == "call.offer":
+            emit_event("call.received", {
+                "call_id": data.get("call_id", ""),
+                "phone": _phone_from_jid(data.get("from", "")),
+                "auto_rejected": bool(data.get("auto_rejected", False)),
+                "remote_platform": data.get("remote_platform", ""),
+                "remote_version": data.get("remote_version", ""),
+                "group_jid": data.get("group_jid"),
+                "ts": time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "call"})
+
+        if isinstance(event, str) and event.startswith("newsletter."):
+            emit_event("newsletter.event", {
+                "subtype": event,
+                "ts": time.time(),
+                "raw": data,
+            })
+            return _ok({"status": "newsletter"})
 
         # Handle chat presence events (typing/recording indicators)
         if event == "chat_presence":
@@ -562,6 +702,12 @@ def register_routes(app, deps):
                     "phone": phone,
                     "state": presence_state,
                     "media": media,
+                })
+                emit_event("presence.changed", {
+                    "phone": phone,
+                    "state": presence_state,
+                    "media": media,
+                    "ts": time.time(),
                 })
             return _ok({"status": "presence"})
 
@@ -605,6 +751,12 @@ def register_routes(app, deps):
                         "msg_ids": all_updated,
                         "status": "delivered",
                     })
+                    emit_event("receipt.changed", {
+                        "phone": ack_phone,
+                        "msg_ids": all_updated,
+                        "status": "delivered",
+                        "ts": time.time(),
+                    })
 
             elif receipt_type in ("read", "read-self") and msg_ids:
                 # Update outgoing message status to "read" (with cascade to prior msgs)
@@ -620,6 +772,12 @@ def register_routes(app, deps):
                         "phone": ack_phone,
                         "msg_ids": all_updated,
                         "status": "read",
+                    })
+                    emit_event("receipt.changed", {
+                        "phone": ack_phone,
+                        "msg_ids": all_updated,
+                        "status": "read",
+                        "ts": time.time(),
                     })
 
                 # Existing unread tracking logic (for incoming messages read by us)
@@ -832,6 +990,14 @@ def register_routes(app, deps):
                 "message": broadcast_msg,
             })
 
+            # Plugin event: this message was sent from the user's phone outside the app
+            emit_event("message.sent", {
+                "phone": phone, "text": text, "msg_id": msg_id,
+                "media_type": media_type, "media_path": media_path,
+                "source": "echo", "status": "operator",
+                "ts": time.time(),
+            })
+
             # Transcribe outgoing audio if the configured mode includes "sent"
             audio_mode = settings.get("audio_transcription_mode", "received")
             if audio_path and audio_mode in ("sent", "both"):
@@ -947,6 +1113,10 @@ def register_routes(app, deps):
                     contact.is_archived = archived
                     contact.save()
                     logger.info("[Webhook] Archive status updated: %s -> %s", phone, archived)
+                    emit_event("chat.archived", {
+                        "phone": phone, "archived": bool(archived),
+                        "ts": time.time(),
+                    })
             else:
                 logger.info("[Webhook] Skipping archive check for %s (archived by app)", phone)
         except Exception as e:
@@ -959,6 +1129,39 @@ def register_routes(app, deps):
         # Increment unread count for incoming user messages
         await asyncio.to_thread(lambda: agent_handler._get_contact(phone).increment_unread(msg_id))
 
+        # Build parsed message payload for plugins (filter + event). Includes
+        # the full GOWA payload under `raw` so plugins that need an obscure
+        # field can still get it. We emit BEFORE the skip_ai branch so group
+        # messages without a mention still show up to event subscribers.
+        parsed_msg = {
+            "phone": phone,
+            "name": from_name,
+            "text": display_text,
+            "raw_text": text,
+            "msg_id": msg_id,
+            "media_type": media_type,
+            "media_path": media_path,
+            "is_group": is_group,
+            "group_jid": chat_jid if is_group else None,
+            "individual_phone": individual_phone if is_group else None,
+            "is_from_me": False,
+            "raw": data,
+            "ts": time.time(),
+        }
+        # Plugin filter: can rewrite/anonymize/translate or return None to drop
+        parsed_msg = await apply_filter(
+            "filter.message.before_save", parsed_msg, {"phone": phone}
+        )
+        if parsed_msg is None:
+            logger.info("[Webhook] inbound from %s filtered out before save", phone)
+            return _ok({"status": "filtered_out"})
+
+        # Filter may have rewritten user-facing strings — propagate.
+        display_text = parsed_msg.get("text", display_text)
+        msg_id = parsed_msg.get("msg_id", msg_id)
+        media_type = parsed_msg.get("media_type", media_type)
+        media_path = parsed_msg.get("media_path", media_path)
+
         # Broadcast incoming message to frontend in real-time
         broadcast_msg: dict = {"role": "user", "content": display_text, "ts": time.time(), "msg_id": msg_id}
         if media_type:
@@ -968,6 +1171,11 @@ def register_routes(app, deps):
             "phone": phone,
             "message": broadcast_msg,
         })
+
+        # Plugin event: fired for ALL inbound messages, including group msgs
+        # without a mention. Plugins filter inside their handler on
+        # `is_group`/`media_type` etc.
+        emit_event("message.received", parsed_msg)
 
         # For group messages without mention: save to history but don't trigger AI
         if skip_ai:
@@ -985,6 +1193,15 @@ def register_routes(app, deps):
             "audio_path": audio_path,
             "msg_id": msg_id,
         })
+
+        # A real message arriving from the contact proves they finished typing
+        # *something*. WhatsApp doesn't reliably emit `paused` for linked devices,
+        # so without this the orchestrator would block on a stale `composing` flag
+        # until the 25s stale timeout. Clear here; a *new* `composing` event for
+        # the next message will re-set `active=True` with a fresh last_ts.
+        ts = state.typing_state.get(phone)
+        if ts and ts.get("active"):
+            state.typing_state[phone] = {**ts, "active": False}
 
         # Schedule (or restart) the typing-aware orchestrator. This cancels the current
         # cycle if it's not in the SEND phase yet, so a newly arrived message can be

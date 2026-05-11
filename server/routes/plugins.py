@@ -22,7 +22,9 @@ from plugins.manifest import (
     load_manifest,
 )
 from plugins.restart import schedule_restart
+from plugins.events import emit as emit_event
 from server.helpers import _err, _ok
+import time as _time
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,8 @@ def register_routes(app, deps):
         ok = await asyncio.to_thread(plugin_repo.set_enabled, plugin_id, True)
         if not ok:
             return _err("plugin não encontrado", 404)
+        # Emit BEFORE schedule_restart — after the os._exit the bus is gone.
+        emit_event("plugin.enabled", {"plugin_id": plugin_id, "ts": _time.time()})
         schedule_restart(reason=f"plugin {plugin_id} enabled")
         return _ok({"id": plugin_id, "enabled": True, "restarting": True})
 
@@ -98,6 +102,7 @@ def register_routes(app, deps):
         ok = await asyncio.to_thread(plugin_repo.set_enabled, plugin_id, False)
         if not ok:
             return _err("plugin não encontrado", 404)
+        emit_event("plugin.disabled", {"plugin_id": plugin_id, "ts": _time.time()})
         schedule_restart(reason=f"plugin {plugin_id} disabled")
         return _ok({"id": plugin_id, "enabled": False, "restarting": True})
 
@@ -155,6 +160,11 @@ def register_routes(app, deps):
         prefix = f"plugin.{plugin_id}."
         kv = {prefix + k: v for k, v in validated.model_dump().items()}
         await asyncio.to_thread(config_repo.set_many, kv)
+        emit_event("plugin.settings.changed", {
+            "plugin_id": plugin_id,
+            "values": validated.model_dump(),
+            "ts": _time.time(),
+        })
         return _ok({"id": plugin_id, "values": validated.model_dump()})
 
     # ── Import / Export ───────────────────────────────────────────────
