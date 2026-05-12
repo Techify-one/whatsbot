@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { sendMessage, retrySend, sendImage, sendAudio, sendPresence, sendPrivateMessage } from '../../services/api.js';
 import { SendIcon, BackArrowIcon, DefaultAvatar, GroupAvatar, EmojiIcon, AttachIcon, MicIcon, SingleCheckIcon, DoubleCheckIcon, ClockIcon, FailedIcon, RetryIcon, StopIcon } from './icons.js';
-import { formatBubbleTime } from './utils.js';
+import { formatBubbleTime, isSameDay, formatDateSeparator } from './utils.js';
 import { formatWhatsApp } from '../../utils/formatWhatsApp.js';
 import { AudioPlayer } from './AudioPlayer.js';
 
@@ -409,10 +409,20 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               const isError = m.role === 'error';
               const isFirst = i === 0 || messages[i - 1].role !== m.role;
 
+              const prevTs = i > 0 ? messages[i - 1].ts : null;
+              const showDateSep = m.ts && (!prevTs || !isSameDay(prevTs, m.ts));
+              const dateSeparator = showDateSep
+                ? html`<div key=${`sep-${m.ts}-${i}`} class="flex justify-center my-[12px]">
+                    <span class="bg-white/90 text-wa-secondary text-[12px] font-medium uppercase tracking-wide rounded-[7.5px] px-[12px] py-[5px] shadow-sm">
+                      ${formatDateSeparator(m.ts)}
+                    </span>
+                  </div>`
+                : null;
+
               if (isPrivateNote) {
                 const failed = m._status === 'failed';
                 const pending = m._status === 'sending';
-                return html`
+                return [dateSeparator, html`
                   <div key=${m._localId || i} class="flex justify-center mt-[4px]">
                     <div class="max-w-[75%] rounded-[7.5px] px-[11px] pt-[6px] pb-[7px] text-[13px] leading-[18px] whitespace-pre-wrap relative shadow-sm"
                          style="background:#3b266b; color:#ede9fe; border:1px solid #7c3aed; ${failed ? 'opacity:0.7;' : ''}">
@@ -426,11 +436,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                     </div>
                   </div>
-                `;
+                `];
               }
 
               if (isTranscription) {
-                return html`
+                return [dateSeparator, html`
                   <div key=${i} class="flex justify-center mt-[4px]">
                     <div class="max-w-[75%] rounded-[7.5px] px-[10px] pt-[5px] pb-[6px] text-[12.5px] leading-[17px] whitespace-pre-wrap relative"
                          style="background: #2d1b4e; color: #d4bfff; border: 1px solid #4a2d7a;">
@@ -444,11 +454,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                     </div>
                   </div>
-                `;
+                `];
               }
 
               if (isSystemNotice) {
-                return html`
+                return [dateSeparator, html`
                   <div key=${i} class="flex justify-center mt-[4px]">
                     <div class="max-w-[75%] rounded-[7.5px] px-[10px] pt-[5px] pb-[6px] text-[12.5px] leading-[17px] whitespace-pre-wrap relative"
                          style="background: #1b2e4e; color: #93c5fd; border: 1px solid #1e40af;">
@@ -462,11 +472,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                     </div>
                   </div>
-                `;
+                `];
               }
 
               if (isToolCall) {
-                return html`
+                return [dateSeparator, html`
                   <div key=${i} class="flex justify-center mt-[4px]">
                     <div class="max-w-[75%] rounded-[7.5px] px-[10px] pt-[5px] pb-[6px] text-[12.5px] leading-[17px] whitespace-pre-wrap relative"
                          style="background: #2d1b0e; color: #fbbf24; border: 1px solid #78350f;">
@@ -480,11 +490,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                     </div>
                   </div>
-                `;
+                `];
               }
 
               if (isError) {
-                return html`
+                return [dateSeparator, html`
                   <div key=${i} class="flex justify-center mt-[4px]">
                     <div class="max-w-[85%] rounded-[7.5px] px-[10px] pt-[5px] pb-[6px] text-[12.5px] leading-[17px] whitespace-pre-wrap relative"
                          style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;">
@@ -498,7 +508,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                     </div>
                   </div>
-                `;
+                `];
               }
 
               const isFailed = m._status === 'failed' || m.status === 'failed';
@@ -520,7 +530,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               const senderLabel = isUser ? (groupSender || displayName) : (isOperator ? 'Manual' : 'IA');
               const senderColor = isUser ? '#1f7aec' : (isOperator ? '#b45309' : '#047857');
 
-              return html`
+              return [dateSeparator, html`
                 <div key=${m._localId || i} class="flex ${isUser ? 'justify-start' : 'justify-end'} ${isFirst ? 'mt-[12px]' : 'mt-[2px]'}">
                   <div class="wa-bubble max-w-[65%] rounded-[7.5px] px-[9px] pt-[6px] pb-[8px] text-[14.2px] leading-[19px] whitespace-pre-wrap relative ${
                     isUser
@@ -560,7 +570,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                     </span>
                   </div>
                 </div>
-              `;
+              `];
             })
         }
       </div>
