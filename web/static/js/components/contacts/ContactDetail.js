@@ -395,7 +395,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
       </div>
 
       <!-- Chat area with doodle pattern -->
-      <div ref=${chatRef} class="flex-1 min-h-0 overflow-y-auto wa-scrollbar wa-chat-pattern py-2 px-[4%] lg:px-[7%]">
+      <div ref=${chatRef} class="flex-1 min-h-0 overflow-y-auto overscroll-contain wa-scrollbar wa-chat-pattern py-2 px-[4%] lg:px-[7%]">
         ${!messages || messages.length === 0
           ? html`<div class="text-center text-wa-secondary py-8 text-[14px]">
               <span class="bg-white/80 rounded-lg px-3 py-1.5 text-[12.5px] shadow-sm">Nenhuma mensagem ainda</span>
