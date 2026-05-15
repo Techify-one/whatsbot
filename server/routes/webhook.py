@@ -13,9 +13,321 @@ from gowa.client import GOWASendError, extract_msg_id
 from db.repositories import contact_repo, message_repo
 from server.execution import astart_execution, aend_execution, atrack_step, prune_executions
 from server.helpers import _ok, parse_split_reply
-from plugins.events import emit as emit_event, apply_filter
+from plugins.events import emit as emit_event, apply_filter, emit_with_filter
 
 logger = logging.getLogger(__name__)
+
+
+# Media types whose payload contains a downloadable ``path`` and can be
+# rendered with a player/preview in the chat panel.
+_PATHED_MEDIA: tuple[str, ...] = (
+    "image", "audio", "video", "sticker", "document",
+)
+
+
+def _coerce_path(raw):
+    """Accept either a string path or a dict ``{path, ...}`` from GOWA."""
+    if isinstance(raw, str):
+        return raw, {}
+    if isinstance(raw, dict):
+        return (raw.get("path") or ""), dict(raw)
+    return "", {}
+
+
+def _extract_media(data: dict, *, is_from_me: bool, existing_text: str) -> dict:
+    """Inspect a GOWA payload and resolve which media (if any) it carries.
+
+    Returns a dict with:
+
+    * ``media_type`` — one of ``image|audio|video|sticker|document|location|
+      live_location|poll|interactive|order|product|contact|contacts`` or ``None``.
+    * ``media_path`` — path on disk for playable media; ``"geo:lat,lng"`` for
+      location/live_location; ``None`` for non-pathed types.
+    * ``media_extras`` — type-specific metadata (caption, duration, lat/lng,
+      name, options, button_id, …) or ``None`` if there's nothing extra.
+    * ``text`` — final placeholder text (existing_text plus any extracted
+      caption or auto-generated placeholder like ``"[Vídeo recebido]"``).
+    * ``audio_path`` / ``image_path`` / ``document_path`` / ``document_name``
+      — back-compat fields. Other call sites still read these individually
+      to decide branches (transcription kind, batch path, etc.).
+
+    Detection order matches the original implementation for ``image, audio,
+    video_note, document`` then extends it with the new types.
+    """
+    text = existing_text or ""
+    media_type: str | None = None
+    media_path: str | None = None
+    extras: dict | None = None
+    audio_path = image_path = document_path = None
+    document_name: str | None = None
+
+    def _placeholder(noun: str) -> str:
+        return f"[{noun} enviado]" if is_from_me else f"[{noun} recebido]"
+
+    # — image ————————————————————————————————————————————
+    raw = data.get("image")
+    if raw:
+        p, info = _coerce_path(raw)
+        if p:
+            image_path = p
+            media_type = "image"
+            media_path = p
+            caption = (info.get("caption") or "").strip()
+            if not text and caption:
+                text = caption
+            elif not text and is_from_me:
+                text = "[Imagem enviada]"
+            if caption or info.get("mimetype"):
+                extras = {
+                    k: v for k, v in {
+                        "caption": caption or None,
+                        "mimetype": info.get("mimetype"),
+                    }.items() if v is not None
+                } or None
+
+    # — audio ————————————————————————————————————————————
+    if media_type is None:
+        raw = data.get("audio")
+        if raw:
+            p, info = _coerce_path(raw)
+            if p:
+                audio_path = p
+                media_type = "audio"
+                media_path = p
+                if not text:
+                    text = _placeholder("Áudio")
+                if info.get("duration") or info.get("mimetype"):
+                    extras = {
+                        k: v for k, v in {
+                            "duration_ms": info.get("duration"),
+                            "mimetype": info.get("mimetype"),
+                        }.items() if v is not None
+                    } or None
+
+    # — video_note (voice) — treated as audio ————————————————
+    if media_type is None:
+        raw = data.get("video_note")
+        if raw:
+            p, info = _coerce_path(raw)
+            if p:
+                audio_path = p
+                media_type = "audio"
+                media_path = p
+                if not text:
+                    text = _placeholder("Áudio")
+                extras = {"is_voice_note": True}
+
+    # — video ————————————————————————————————————————————
+    if media_type is None:
+        raw = data.get("video")
+        if raw:
+            p, info = _coerce_path(raw)
+            if p:
+                media_type = "video"
+                media_path = p
+                caption = (info.get("caption") or "").strip()
+                if not text and caption:
+                    text = caption
+                elif not text:
+                    text = _placeholder("Vídeo")
+                extras = {
+                    k: v for k, v in {
+                        "caption": caption or None,
+                        "duration_ms": info.get("duration"),
+                        "mimetype": info.get("mimetype"),
+                    }.items() if v is not None
+                } or None
+
+    # — sticker ——————————————————————————————————————————
+    if media_type is None:
+        raw = data.get("sticker")
+        if raw:
+            p, info = _coerce_path(raw)
+            if p:
+                media_type = "sticker"
+                media_path = p
+                if not text:
+                    text = "[Sticker]"
+                if info.get("is_animated") is not None or info.get("mimetype"):
+                    extras = {
+                        k: v for k, v in {
+                            "is_animated": info.get("is_animated"),
+                            "mimetype": info.get("mimetype"),
+                        }.items() if v is not None
+                    } or None
+
+    # — document —————————————————————————————————————————
+    if media_type is None:
+        raw = data.get("document")
+        if raw:
+            p, info = _coerce_path(raw)
+            if p:
+                document_path = p
+                media_type = "document"
+                media_path = p
+                document_name = (info.get("file_name")
+                                 or info.get("filename") or "")
+                caption = (info.get("caption") or "").strip()
+                if not text and caption:
+                    text = caption
+                elif not text:
+                    label = document_name or "documento"
+                    text = (f"[Documento enviado: {label}]" if is_from_me
+                            else f"[Documento recebido: {label}]")
+                if document_name or info.get("mimetype"):
+                    extras = {
+                        k: v for k, v in {
+                            "file_name": document_name or None,
+                            "mimetype": info.get("mimetype"),
+                        }.items() if v is not None
+                    } or None
+
+    # — location ——————————————————————————————————————————
+    if media_type is None:
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            lat = loc.get("latitude") or loc.get("lat")
+            lng = loc.get("longitude") or loc.get("lng")
+            if lat is not None and lng is not None:
+                name = (loc.get("name") or "").strip()
+                address = (loc.get("address") or "").strip()
+                media_type = "location"
+                media_path = f"geo:{lat},{lng}"
+                if not text:
+                    if name:
+                        text = f"[Localização: {name}]"
+                    elif address:
+                        text = f"[Localização: {address}]"
+                    else:
+                        text = f"[Localização: {lat},{lng}]"
+                extras = {
+                    "lat": lat, "lng": lng,
+                    **({"name": name} if name else {}),
+                    **({"address": address} if address else {}),
+                }
+
+    # — live_location —————————————————————————————————————
+    if media_type is None:
+        live = data.get("live_location")
+        if isinstance(live, dict):
+            lat = live.get("latitude") or live.get("lat")
+            lng = live.get("longitude") or live.get("lng")
+            if lat is not None and lng is not None:
+                media_type = "live_location"
+                media_path = f"geo:{lat},{lng}"
+                if not text:
+                    text = "[Localização ao vivo]"
+                extras = {"lat": lat, "lng": lng}
+
+    # — poll ——————————————————————————————————————————————
+    if media_type is None:
+        poll = data.get("poll")
+        if isinstance(poll, dict):
+            name = (poll.get("name") or "").strip()
+            options = poll.get("options") or []
+            opt_titles = [
+                (o.get("name") or o.get("optionName") or "").strip()
+                for o in options if isinstance(o, dict)
+            ]
+            if name or opt_titles:
+                media_type = "poll"
+                if not text:
+                    text = f"[Enquete: {name or 'sem título'}]"
+                extras = {"name": name, "options": opt_titles}
+
+    # — interactive responses (buttons / list) ———————————————
+    if media_type is None:
+        br = data.get("buttons_response") or data.get("buttonsResponse")
+        if isinstance(br, dict):
+            title = (br.get("title") or br.get("display_text") or "").strip()
+            button_id = (br.get("button_id") or br.get("selected_id") or "").strip()
+            media_type = "interactive"
+            if not text:
+                text = f"[Resposta: {title or button_id or 'sem id'}]"
+            extras = {"button_id": button_id, "title": title}
+    if media_type is None:
+        lr = data.get("list_response") or data.get("listResponse")
+        if isinstance(lr, dict):
+            title = (lr.get("title") or "").strip()
+            row_id = (lr.get("row_id") or lr.get("selected_id") or "").strip()
+            media_type = "interactive"
+            if not text:
+                text = f"[Seleção: {title or row_id or 'sem id'}]"
+            extras = {"row_id": row_id, "title": title}
+
+    # — order ————————————————————————————————————————————
+    if media_type is None:
+        order = data.get("order")
+        if isinstance(order, dict):
+            item_count = order.get("item_count") or order.get("itemCount")
+            media_type = "order"
+            if not text:
+                if item_count is not None:
+                    text = f"[Pedido: {item_count} item(ns)]"
+                else:
+                    text = "[Pedido recebido]"
+            extras = {
+                k: v for k, v in {
+                    "item_count": item_count,
+                    "total": order.get("total"),
+                    "currency": order.get("currency"),
+                }.items() if v is not None
+            } or None
+
+    # — product ——————————————————————————————————————————
+    if media_type is None:
+        prod = data.get("product")
+        if isinstance(prod, dict):
+            media_type = "product"
+            if not text:
+                text = "[Produto compartilhado]"
+            extras = {
+                "product_id": prod.get("product_id") or prod.get("id"),
+                "title": prod.get("title"),
+            }
+
+    # — contact / vCard (single or array) ——————————————————
+    if media_type is None and not text:
+        shared: list[tuple[str, str]] = []
+        single = data.get("contact")
+        if isinstance(single, dict):
+            n = (single.get("displayName") or single.get("display_name")
+                 or single.get("name") or "").strip()
+            ph = (single.get("phone_number") or single.get("phoneNumber") or "").strip()
+            shared.append((n, ph))
+        arr = data.get("contacts_array") or data.get("contactsArray")
+        if isinstance(arr, list):
+            for c in arr:
+                if not isinstance(c, dict):
+                    continue
+                n = (c.get("displayName") or c.get("display_name")
+                     or c.get("name") or "").strip()
+                ph = (c.get("phone_number") or c.get("phoneNumber") or "").strip()
+                shared.append((n, ph))
+        if shared:
+            media_type = "contact" if len(shared) == 1 else "contacts"
+            if len(shared) == 1:
+                n, ph = shared[0]
+                label = n or ph or "sem nome"
+                suffix = f" ({ph})" if ph and n else ""
+                text = f"[Contato compartilhado: {label}{suffix}]"
+            else:
+                names = ", ".join(n or p or "?" for n, p in shared)
+                text = f"[Contatos compartilhados ({len(shared)}): {names}]"
+            extras = {"contacts": [
+                {"name": n, "phone": ph} for n, ph in shared
+            ]}
+
+    return {
+        "media_type": media_type,
+        "media_path": media_path,
+        "media_extras": extras,
+        "text": text,
+        "audio_path": audio_path,
+        "image_path": image_path,
+        "document_path": document_path,
+        "document_name": document_name,
+    }
 
 
 def register_routes(app, deps):
@@ -139,7 +451,7 @@ def register_routes(app, deps):
             })
 
             # Plugin event: AI reply leg
-            emit_event("message.sent", {
+            await emit_with_filter("message.sent", {
                 "phone": phone, "text": part, "msg_id": part_msg_id,
                 "media_type": None, "media_path": None,
                 "source": "ai", "status": "sent",
@@ -273,6 +585,69 @@ def register_routes(app, deps):
             },
         })
 
+    async def _maybe_transcribe(
+        media_kind: str,            # "audio" or "image"
+        path: str,
+        *,
+        phone: str,
+        source: str,                # "batch" | "echo" | "group_no_mention"
+        is_group: bool = False,
+        group_jid: str | None = None,
+    ) -> str:
+        """Run audio transcription / image description with plugin hooks.
+
+        Wraps the two transcribe call sites in the codebase, exposing two
+        plugin hooks: ``filter.transcription.should_run`` (bool, can pull
+        the brake) and ``filter.transcription.result`` (str, can rewrite
+        the transcript). Returns the final transcription string — empty
+        when the action was skipped, failed, or yielded nothing.
+        """
+        # Core enabled-by-config gate — keep semantics identical to before
+        # so plugins can only *narrow* the policy, never widen it.
+        if media_kind == "audio":
+            audio_mode = settings.get("audio_transcription_mode", "received")
+            allow = (source == "echo" and audio_mode in ("sent", "both")) or (
+                source != "echo" and audio_mode in ("received", "both")
+            )
+        else:  # image
+            allow = bool(settings.get("image_transcription_enabled", True))
+        if not allow:
+            return ""
+
+        extras = {
+            "phone": phone,
+            "media_kind": media_kind,
+            "media_path": path,
+            "is_group": is_group,
+            "group_jid": group_jid,
+            "source": source,
+        }
+        should = await apply_filter(
+            "filter.transcription.should_run", True, extras
+        )
+        if not should:
+            return ""
+
+        fn = (agent_handler.transcribe_audio if media_kind == "audio"
+              else agent_handler.describe_image)
+        try:
+            raw = await asyncio.to_thread(fn, path, phone)
+        except Exception as e:
+            logger.error(
+                "[Transcription] %s failed for %s: %s",
+                media_kind, phone, e,
+            )
+            return ""
+
+        extras["model"] = (
+            getattr(agent_handler, "audio_model", None) if media_kind == "audio"
+            else getattr(agent_handler, "image_model", None)
+        )
+        final = await apply_filter(
+            "filter.transcription.result", raw or "", extras
+        )
+        return final or ""
+
     # ── Batch Processing ──────────────────────────────────────────
 
     # ── Typing-Aware Orchestrator ─────────────────────────────────
@@ -374,6 +749,13 @@ def register_routes(app, deps):
                                 len(text_parts), phone, combined[:80])
                     last_msg_id = text_msg_ids[-1] if text_msg_ids else None
                     contact.add_message("user", combined, msg_id=last_msg_id)
+                    await emit_with_filter("message.saved", {
+                        "phone": phone, "text": combined, "msg_id": last_msg_id,
+                        "media_type": None, "media_path": None,
+                        "is_group": contact.is_group,
+                        "source": "batch_text",
+                        "ts": time.time(),
+                    })
                     if contact.ai_enabled and settings.get("auto_reply", True):
                         if not agent_handler.api_key:
                             notice = "[WhatsBot] API key não configurada."
@@ -415,24 +797,40 @@ def register_routes(app, deps):
                 media_label = "image" if image_path else "audio"
                 logger.info("[Batch] Processing %s from %s", media_label, phone)
 
+                _saved_text = text or ("[Áudio recebido]" if audio_path else "")
+                _saved_media_type = "image" if image_path else "audio"
+                _saved_media_path = image_path or audio_path
                 contact.add_message(
-                    "user", text or ("[Áudio recebido]" if audio_path else ""),
-                    media_type="image" if image_path else "audio",
-                    media_path=image_path or audio_path,
+                    "user", _saved_text,
+                    media_type=_saved_media_type,
+                    media_path=_saved_media_path,
                     msg_id=item.get("msg_id"),
                 )
+                await emit_with_filter("message.saved", {
+                    "phone": phone, "text": _saved_text,
+                    "msg_id": item.get("msg_id"),
+                    "media_type": _saved_media_type,
+                    "media_path": _saved_media_path,
+                    "is_group": contact.is_group,
+                    "source": "batch_media",
+                    "ts": time.time(),
+                })
 
-                audio_mode = settings.get("audio_transcription_mode", "received")
                 transcription = ""
-                try:
-                    if audio_path and audio_mode in ("received", "both"):
-                        transcription = await asyncio.to_thread(
-                            agent_handler.transcribe_audio, audio_path, phone)
-                    elif image_path and settings.get("image_transcription_enabled", True):
-                        transcription = await asyncio.to_thread(
-                            agent_handler.describe_image, image_path, phone)
-                except Exception as e:
-                    logger.error("[Batch] Transcription error for %s: %s", phone, e)
+                if audio_path:
+                    transcription = await _maybe_transcribe(
+                        "audio", audio_path,
+                        phone=phone, source="batch",
+                        is_group=contact.is_group,
+                        group_jid=phone if contact.is_group else None,
+                    )
+                elif image_path:
+                    transcription = await _maybe_transcribe(
+                        "image", image_path,
+                        phone=phone, source="batch",
+                        is_group=contact.is_group,
+                        group_jid=phone if contact.is_group else None,
+                    )
 
                 if transcription:
                     if audio_path:
@@ -590,7 +988,7 @@ def register_routes(app, deps):
         # localmente nestes (nenhum LLM, nenhum save), só fan-outa pros plugins.
 
         if event == "message.reaction":
-            emit_event("message.reaction", {
+            await emit_with_filter("message.reaction", {
                 "id": data.get("id", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
                 "from": _phone_from_jid(data.get("from", "")),
@@ -603,7 +1001,7 @@ def register_routes(app, deps):
             return _ok({"status": "reaction"})
 
         if event == "message.edited":
-            emit_event("message.edited", {
+            await emit_with_filter("message.edited", {
                 "id": data.get("id", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
                 "from": _phone_from_jid(data.get("from", "")),
@@ -616,7 +1014,7 @@ def register_routes(app, deps):
             return _ok({"status": "edited"})
 
         if event == "message.revoked":
-            emit_event("message.revoked", {
+            await emit_with_filter("message.revoked", {
                 "id": data.get("id", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
                 "from": _phone_from_jid(data.get("from", "")),
@@ -629,7 +1027,7 @@ def register_routes(app, deps):
             return _ok({"status": "revoked"})
 
         if event == "message.deleted":
-            emit_event("message.deleted", {
+            await emit_with_filter("message.deleted", {
                 "deleted_message_id": data.get("deleted_message_id", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "") or data.get("from", "")),
                 "from": _phone_from_jid(data.get("from", "")),
@@ -643,7 +1041,7 @@ def register_routes(app, deps):
             return _ok({"status": "deleted"})
 
         if event == "group.participants":
-            emit_event("group.participants_changed", {
+            await emit_with_filter("group.participants_changed", {
                 "chat_id": data.get("chat_id", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "")),
                 "type": data.get("type", ""),
@@ -654,7 +1052,7 @@ def register_routes(app, deps):
             return _ok({"status": "group_participants"})
 
         if event == "group.joined":
-            emit_event("group.joined", {
+            await emit_with_filter("group.joined", {
                 "chat_id": data.get("chat_id", "") or data.get("group_jid", ""),
                 "phone": _phone_from_jid(data.get("chat_id", "") or data.get("group_jid", "")),
                 "ts": time.time(),
@@ -663,7 +1061,7 @@ def register_routes(app, deps):
             return _ok({"status": "group_joined"})
 
         if event == "call.offer":
-            emit_event("call.received", {
+            await emit_with_filter("call.received", {
                 "call_id": data.get("call_id", ""),
                 "phone": _phone_from_jid(data.get("from", "")),
                 "auto_rejected": bool(data.get("auto_rejected", False)),
@@ -676,7 +1074,7 @@ def register_routes(app, deps):
             return _ok({"status": "call"})
 
         if isinstance(event, str) and event.startswith("newsletter."):
-            emit_event("newsletter.event", {
+            await emit_with_filter("newsletter.event", {
                 "subtype": event,
                 "ts": time.time(),
                 "raw": data,
@@ -703,7 +1101,7 @@ def register_routes(app, deps):
                     "state": presence_state,
                     "media": media,
                 })
-                emit_event("presence.changed", {
+                await emit_with_filter("presence.changed", {
                     "phone": phone,
                     "state": presence_state,
                     "media": media,
@@ -751,7 +1149,7 @@ def register_routes(app, deps):
                         "msg_ids": all_updated,
                         "status": "delivered",
                     })
-                    emit_event("receipt.changed", {
+                    await emit_with_filter("receipt.changed", {
                         "phone": ack_phone,
                         "msg_ids": all_updated,
                         "status": "delivered",
@@ -773,7 +1171,7 @@ def register_routes(app, deps):
                         "msg_ids": all_updated,
                         "status": "read",
                     })
-                    emit_event("receipt.changed", {
+                    await emit_with_filter("receipt.changed", {
                         "phone": ack_phone,
                         "msg_ids": all_updated,
                         "status": "read",
@@ -821,86 +1219,24 @@ def register_routes(app, deps):
                 or data.get("message", "")
                 or data.get("text", "")).strip()
 
-        # Extract media paths from GOWA payload
-        image_path: str | None = None
-        audio_path: str | None = None
-        document_path: str | None = None
-        document_name: str | None = None
-
-        raw_image = data.get("image")
-        if raw_image:
-            if isinstance(raw_image, str):
-                image_path = raw_image
-            elif isinstance(raw_image, dict):
-                image_path = raw_image.get("path", "")
-                if not text:
-                    text = (raw_image.get("caption", "") or "").strip()
-
-        raw_audio = data.get("audio")
-        if raw_audio:
-            if isinstance(raw_audio, str):
-                audio_path = raw_audio
-            elif isinstance(raw_audio, dict):
-                audio_path = raw_audio.get("path", "")
-
-        # Video notes (voice messages) are treated as audio
-        raw_vn = data.get("video_note")
-        if raw_vn and not audio_path:
-            if isinstance(raw_vn, str):
-                audio_path = raw_vn
-            elif isinstance(raw_vn, dict):
-                audio_path = raw_vn.get("path", "")
-
-        raw_doc = data.get("document")
-        if raw_doc:
-            if isinstance(raw_doc, str):
-                document_path = raw_doc
-            elif isinstance(raw_doc, dict):
-                document_path = raw_doc.get("path", "")
-                document_name = raw_doc.get("file_name") or raw_doc.get("filename") or ""
-                if not text:
-                    text = (raw_doc.get("caption", "") or "").strip()
-
-        # Contact / vCard messages (GOWA v8.5.0+)
-        if not text:
-            shared_contacts: list[tuple[str, str]] = []
-            single = data.get("contact")
-            if isinstance(single, dict):
-                name = (single.get("displayName") or single.get("display_name")
-                        or single.get("name") or "").strip()
-                ph = (single.get("phone_number") or single.get("phoneNumber") or "").strip()
-                shared_contacts.append((name, ph))
-            arr = data.get("contacts_array") or data.get("contactsArray")
-            if isinstance(arr, list):
-                for c in arr:
-                    if not isinstance(c, dict):
-                        continue
-                    name = (c.get("displayName") or c.get("display_name")
-                            or c.get("name") or "").strip()
-                    ph = (c.get("phone_number") or c.get("phoneNumber") or "").strip()
-                    shared_contacts.append((name, ph))
-            if shared_contacts:
-                if len(shared_contacts) == 1:
-                    name, ph = shared_contacts[0]
-                    label = name or ph or "sem nome"
-                    suffix = f" ({ph})" if ph and name else ""
-                    text = f"[Contato compartilhado: {label}{suffix}]"
-                else:
-                    names = ", ".join(n or p or "?" for n, p in shared_contacts)
-                    text = f"[Contatos compartilhados ({len(shared_contacts)}): {names}]"
-
-        # For audio without text, set a placeholder
-        if audio_path and not text:
-            text = "[Áudio recebido]" if not is_from_me else "[Áudio enviado]"
-
-        # For image without text, set a placeholder for outgoing
-        if image_path and not text and is_from_me:
-            text = "[Imagem enviada]"
-
-        # For document without text, set a placeholder
-        if document_path and not text:
-            label = document_name or "documento"
-            text = f"[Documento recebido: {label}]" if not is_from_me else f"[Documento enviado: {label}]"
+        # Extract media (image, audio, video_note→audio, video, sticker,
+        # document, location, live_location, poll, interactive, order,
+        # product, contact, contacts_array) — see _extract_media for the
+        # detection order and the shape of the returned dict.
+        extracted = _extract_media(
+            data, is_from_me=is_from_me, existing_text=text
+        )
+        text = extracted["text"]
+        media_type: str | None = extracted["media_type"]
+        media_path: str | None = extracted["media_path"]
+        media_extras: dict | None = extracted["media_extras"]
+        # Back-compat locals used by downstream code that decides on
+        # specific kinds (e.g. picks transcribe_audio vs describe_image,
+        # branches on audio_path in the batch loop).
+        audio_path: str | None = extracted["audio_path"]
+        image_path: str | None = extracted["image_path"]
+        document_path: str | None = extracted["document_path"]
+        document_name: str | None = extracted["document_name"]
 
         # Extract chat and sender separately for group support.
         # GOWA v8.5.0 puts the chat in `chat_id` and the actual sender in `from`
@@ -932,15 +1268,29 @@ def register_routes(app, deps):
             individual_phone = phone
             from_name = data.get("from_name", "") or data.get("pushName", "") or data.get("notify", "")
 
-        if not phone or (not text and not image_path and not audio_path and not document_path):
-            media_kind = ("image" if image_path
-                          else "audio" if audio_path
-                          else "document" if document_path
-                          else "none")
-            logger.info("[Webhook] Skipping: text=%r phone=%r media=%s keys=%s payload=%s",
-                        text[:50] if text else "", phone, media_kind,
-                        list(data.keys()), str(data)[:1000])
-            return _ok({"status": "ignored"})
+        if not phone or (not text and not media_type):
+            # Last-chance plugin hook: a filter may detect a media kind the
+            # core doesn't natively understand and turn it into a synthetic
+            # parsed_msg. Returning ``None`` (the default when no plugin
+            # subscribes) lets the legacy "ignored" path proceed.
+            synthetic = await apply_filter(
+                "filter.media.unknown",
+                None,
+                {"phone": phone, "raw": data},
+            )
+            if isinstance(synthetic, dict):
+                media_type = synthetic.get("media_type") or media_type
+                media_path = synthetic.get("media_path") or media_path
+                media_extras = synthetic.get("media_extras") or media_extras
+                if synthetic.get("text"):
+                    text = synthetic["text"]
+            if not phone or (not text and not media_type):
+                logger.info(
+                    "[Webhook] Skipping: text=%r phone=%r media=%s keys=%s payload=%s",
+                    text[:50] if text else "", phone, media_type or "none",
+                    list(data.keys()), str(data)[:1000],
+                )
+                return _ok({"status": "ignored"})
 
         state.processed_messages.add(msg_id)
 
@@ -954,18 +1304,36 @@ def register_routes(app, deps):
 
         # Sync outgoing messages sent from phone (not via our app)
         if is_from_me:
-            # Determine media metadata
-            media_type: str | None = None
-            media_path: str | None = None
-            if image_path:
-                media_type = "image"
-                media_path = image_path
-            elif audio_path:
-                media_type = "audio"
-                media_path = audio_path
-            elif document_path:
-                media_type = "document"
-                media_path = document_path
+            # media_type/media_path already resolved by _extract_media above.
+
+            # Plugin filter: mirror of `filter.message.before_save` but for
+            # the echo branch — lets plugins rewrite/anonymize/drop messages
+            # the user sent from their own phone before we persist them.
+            outgoing_msg = {
+                "phone": phone,
+                "text": text,
+                "msg_id": msg_id,
+                "media_type": media_type,
+                "media_path": media_path,
+                "media_extras": media_extras,
+                "is_from_me": True,
+                "source": "echo",
+                "raw": data,
+                "ts": time.time(),
+            }
+            outgoing_msg = await apply_filter(
+                "filter.message.outgoing", outgoing_msg, {"phone": phone}
+            )
+            if outgoing_msg is None:
+                logger.info(
+                    "[Webhook] outgoing echo from %s filtered out", phone
+                )
+                return _ok({"status": "filtered_out"})
+            text = outgoing_msg.get("text", text)
+            msg_id = outgoing_msg.get("msg_id", msg_id)
+            media_type = outgoing_msg.get("media_type", media_type)
+            media_path = outgoing_msg.get("media_path", media_path)
+            media_extras = outgoing_msg.get("media_extras", media_extras)
 
             logger.info("[Webhook] Syncing outgoing %s to %s: %s",
                         media_type or "message", phone,
@@ -991,39 +1359,30 @@ def register_routes(app, deps):
             })
 
             # Plugin event: this message was sent from the user's phone outside the app
-            emit_event("message.sent", {
+            await emit_with_filter("message.sent", {
                 "phone": phone, "text": text, "msg_id": msg_id,
                 "media_type": media_type, "media_path": media_path,
+                "media_extras": media_extras,
                 "source": "echo", "status": "operator",
                 "ts": time.time(),
             })
 
             # Transcribe outgoing audio if the configured mode includes "sent"
-            audio_mode = settings.get("audio_transcription_mode", "received")
-            if audio_path and audio_mode in ("sent", "both"):
-                try:
-                    out_transcription = await asyncio.to_thread(
-                        agent_handler.transcribe_audio, audio_path, phone)
-                except Exception as e:
-                    logger.error("[Webhook] Outgoing audio transcription failed for %s: %s", phone, e)
-                    out_transcription = ""
+            if audio_path:
+                out_transcription = await _maybe_transcribe(
+                    "audio", audio_path,
+                    phone=phone, source="echo",
+                    is_group=contact.is_group,
+                    group_jid=phone if contact.is_group else None,
+                )
                 if out_transcription:
-                    await _deliver_audio_transcription(phone, contact, out_transcription)
+                    await _deliver_audio_transcription(
+                        phone, contact, out_transcription
+                    )
 
             return _ok({"status": "synced"})
 
-        # Determine media metadata for broadcast
-        media_type: str | None = None
-        media_path: str | None = None
-        if image_path:
-            media_type = "image"
-            media_path = image_path
-        elif audio_path:
-            media_type = "audio"
-            media_path = audio_path
-        elif document_path:
-            media_type = "document"
-            media_path = document_path
+        # media_type/media_path already resolved by _extract_media above.
 
         # For groups: prefix text with sender name and check @mention
         display_text = text
@@ -1113,7 +1472,7 @@ def register_routes(app, deps):
                     contact.is_archived = archived
                     contact.save()
                     logger.info("[Webhook] Archive status updated: %s -> %s", phone, archived)
-                    emit_event("chat.archived", {
+                    await emit_with_filter("chat.archived", {
                         "phone": phone, "archived": bool(archived),
                         "ts": time.time(),
                     })
@@ -1141,6 +1500,7 @@ def register_routes(app, deps):
             "msg_id": msg_id,
             "media_type": media_type,
             "media_path": media_path,
+            "media_extras": media_extras,
             "is_group": is_group,
             "group_jid": chat_jid if is_group else None,
             "individual_phone": individual_phone if is_group else None,
@@ -1161,6 +1521,7 @@ def register_routes(app, deps):
         msg_id = parsed_msg.get("msg_id", msg_id)
         media_type = parsed_msg.get("media_type", media_type)
         media_path = parsed_msg.get("media_path", media_path)
+        media_extras = parsed_msg.get("media_extras", media_extras)
 
         # Broadcast incoming message to frontend in real-time
         broadcast_msg: dict = {"role": "user", "content": display_text, "ts": time.time(), "msg_id": msg_id}
@@ -1175,7 +1536,7 @@ def register_routes(app, deps):
         # Plugin event: fired for ALL inbound messages, including group msgs
         # without a mention. Plugins filter inside their handler on
         # `is_group`/`media_type` etc.
-        emit_event("message.received", parsed_msg)
+        await emit_with_filter("message.received", parsed_msg)
 
         # For group messages without mention: save to history but don't trigger AI.
         # Persist media_type/media_path so the chat panel can render the audio/image/document
@@ -1183,17 +1544,19 @@ def register_routes(app, deps):
         if skip_ai:
             # Transcribe audio/describe image even though the AI won't reply, so the
             # transcription card still appears in the panel — matches private-chat UX.
-            audio_mode = settings.get("audio_transcription_mode", "received")
             transcription = ""
-            try:
-                if audio_path and audio_mode in ("received", "both"):
-                    transcription = await asyncio.to_thread(
-                        agent_handler.transcribe_audio, audio_path, phone)
-                elif image_path and settings.get("image_transcription_enabled", True):
-                    transcription = await asyncio.to_thread(
-                        agent_handler.describe_image, image_path, phone)
-            except Exception as e:
-                logger.error("[Webhook] Group transcription error for %s: %s", phone, e)
+            if audio_path:
+                transcription = await _maybe_transcribe(
+                    "audio", audio_path,
+                    phone=phone, source="group_no_mention",
+                    is_group=True, group_jid=phone,
+                )
+            elif image_path:
+                transcription = await _maybe_transcribe(
+                    "image", image_path,
+                    phone=phone, source="group_no_mention",
+                    is_group=True, group_jid=phone,
+                )
 
             saved_text = display_text
             if transcription and audio_path:
@@ -1208,6 +1571,14 @@ def register_routes(app, deps):
                 "user", saved_text,
                 media_type=media_type, media_path=media_path,
                 msg_id=msg_id)
+            await emit_with_filter("message.saved", {
+                "phone": phone, "text": saved_text, "msg_id": msg_id,
+                "media_type": media_type, "media_path": media_path,
+                "media_extras": media_extras,
+                "is_group": True, "group_jid": phone,
+                "source": "group_no_mention",
+                "ts": time.time(),
+            })
 
             if transcription:
                 if audio_path:

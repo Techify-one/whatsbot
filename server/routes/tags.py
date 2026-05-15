@@ -7,7 +7,7 @@ import time
 from fastapi import Request
 
 from db.repositories import contact_repo
-from plugins.events import emit as emit_event
+from plugins.events import emit as emit_event, emit_with_filter, apply_filter
 from server.helpers import _ok, _err
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def register_routes(app, deps):
         if not agent_handler.tag_registry.create(name, color):
             return _err(f"Tag '{name}' já existe.")
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
-        emit_event("tag.created", {"name": name, "color": color, "ts": time.time()})
+        await emit_with_filter("tag.created", {"name": name, "color": color, "ts": time.time()})
         return _ok({"name": name, "color": color})
 
     @app.put("/api/tags/{name}")
@@ -63,7 +63,7 @@ def register_routes(app, deps):
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
         final_name = new_name or name
         tag_data = agent_handler.tag_registry.get(final_name)
-        emit_event("tag.updated", {
+        await emit_with_filter("tag.updated", {
             "old_name": name, "name": final_name,
             "color": tag_data["color"] if tag_data else color,
             "ts": time.time(),
@@ -81,7 +81,7 @@ def register_routes(app, deps):
             if name in contact.tags:
                 contact.tags.remove(name)
         await ws_manager.broadcast("tags_changed", agent_handler.tag_registry.all())
-        emit_event("tag.deleted", {"name": name, "ts": time.time()})
+        await emit_with_filter("tag.deleted", {"name": name, "ts": time.time()})
         return _ok({"deleted": name})
 
     @app.put("/api/contacts/{phone}/tags")
@@ -92,19 +92,41 @@ def register_routes(app, deps):
         if not isinstance(tags, list):
             return _err("Tags deve ser uma lista.")
 
+        # Snapshot previous tags so we can compute diff (added vs removed)
+        # and feed both ``filter.contact.tags`` and ``contact.untagged``.
+        existing_contact = await asyncio.to_thread(contact_repo.get_by_phone, phone)
+        if existing_contact is None:
+            return _err("Contato não encontrado.", 404)
+        previous = await asyncio.to_thread(
+            lambda: list(agent_handler._get_contact(phone).tags)
+        )
+
+        # Plugin filter: lets a plugin reshape (e.g. enforce protected
+        # tags) or abort the operation by returning ``None``.
+        new_tags = await apply_filter(
+            "filter.contact.tags", list(tags),
+            {"phone": phone, "previous_tags": list(previous)},
+        )
+        if new_tags is None:
+            logger.info("[Tags] filter.contact.tags aborted for %s", phone)
+            return _ok({"phone": phone, "tags": previous})
+
         def _update():
-            c = contact_repo.get_by_phone(phone)
-            if c is None:
-                return None
             contact = agent_handler._get_contact(phone)
-            contact.set_tags(tags)
+            contact.set_tags(new_tags)
             return contact.tags
 
         result = await asyncio.to_thread(_update)
-        if result is None:
-            return _err("Contato não encontrado.", 404)
-        await ws_manager.broadcast("contact_tags_updated", {"phone": phone, "tags": result})
-        emit_event("contact.tagged", {
+        await ws_manager.broadcast(
+            "contact_tags_updated", {"phone": phone, "tags": result}
+        )
+        await emit_with_filter("contact.tagged", {
             "phone": phone, "tags": list(result), "ts": time.time(),
         })
+        # Per-tag removal events for plugins that watch individual tags
+        # being detached from a contact.
+        for removed in set(previous) - set(result):
+            await emit_with_filter("contact.untagged", {
+                "phone": phone, "tag": removed, "ts": time.time(),
+            })
         return _ok({"phone": phone, "tags": result})

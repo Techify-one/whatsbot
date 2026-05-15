@@ -38,7 +38,7 @@ FilterFn = Callable[..., Any]
 
 KNOWN_EVENTS: set[str] = {
     # GOWA inbound / outbound message lifecycle
-    "message.received", "message.sent",
+    "message.received", "message.sent", "message.saved",
     "message.reaction", "message.edited", "message.revoked", "message.deleted",
     # Presence / receipts
     "presence.changed", "receipt.changed",
@@ -66,7 +66,20 @@ KNOWN_EVENTS: set[str] = {
 }
 
 # Subscription keys that are dispatch targets, not emission sources.
+# ``message.any`` is re-dispatched automatically by :func:`emit` whenever
+# ``message.received`` or ``message.sent`` fires, with ``direction`` added
+# to the payload — plugins should subscribe to it rather than emit it.
+# ``*`` is the wildcard catch-all that receives every emitted event.
 _DISPATCH_ONLY_KEYS: set[str] = {"*", "message.any"}
+
+# Lifecycle events that must NOT be interceptable via
+# ``filter.event.before_emit`` — plugins should not be able to block
+# their own load/disable or the app's startup/shutdown.
+_LIFECYCLE_EVENTS: set[str] = {
+    "app.startup", "app.shutdown",
+    "plugin.loaded", "plugin.enabled", "plugin.disabled",
+    "plugin.settings.changed",
+}
 
 # name -> [(plugin_id, handler), ...] in registration order
 _handlers: dict[str, list[tuple[str, EventHandler]]] = {}
@@ -159,6 +172,49 @@ def emit(event_name: str, payload: dict) -> None:
         asyncio.run_coroutine_threadsafe(_fanout(), _loop)
     except Exception as e:
         logger.debug("emit %s failed to schedule: %s", event_name, e)
+
+
+async def emit_with_filter(event_name: str, payload: dict) -> None:
+    """Emit an event after letting plugins veto/rewrite the payload.
+
+    The payload is passed through ``filter.event.before_emit`` first.
+    Any plugin can return ``None`` to suppress the event entirely or
+    return a modified payload to reshape what subscribers see. Lifecycle
+    events (see ``_LIFECYCLE_EVENTS``) bypass the filter — plugins are
+    not allowed to block their own load/disable or app startup/shutdown.
+
+    Use this in async paths where you want plugin interception; use
+    :func:`emit_with_filter_sync` in sync paths, or :func:`emit`
+    directly for lifecycle / perf-sensitive sync paths.
+    """
+    if event_name in _LIFECYCLE_EVENTS:
+        emit(event_name, payload)
+        return
+    filtered = await apply_filter(
+        "filter.event.before_emit", payload, {"event_name": event_name}
+    )
+    if filtered is None:
+        return
+    emit(event_name, filtered if isinstance(filtered, dict) else payload)
+
+
+def emit_with_filter_sync(event_name: str, payload: dict) -> None:
+    """Sync sibling of :func:`emit_with_filter`.
+
+    Use from worker threads (e.g. inside ``asyncio.to_thread`` or in
+    legacy sync code like ``AgentHandler.process_message``). On the
+    event-loop thread it short-circuits (filter is skipped) — same
+    semantics as :func:`apply_filter_sync`.
+    """
+    if event_name in _LIFECYCLE_EVENTS:
+        emit(event_name, payload)
+        return
+    filtered = apply_filter_sync(
+        "filter.event.before_emit", payload, {"event_name": event_name}
+    )
+    if filtered is None:
+        return
+    emit(event_name, filtered if isinstance(filtered, dict) else payload)
 
 
 async def _run_one(

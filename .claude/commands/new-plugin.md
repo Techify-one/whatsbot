@@ -220,10 +220,10 @@ EVENT_HANDLERS = {
 
 **Eventos disponíveis** (lista completa em `CLAUDE.md`):
 
-- Mensagem: `message.received`, `message.sent`, `message.any`, `message.reaction`, `message.edited`, `message.revoked`, `message.deleted`
+- Mensagem: `message.received` (pre-DB), `message.saved` (post-DB, **use este pra ler do DB**), `message.sent`, `message.any`, `message.reaction`, `message.edited`, `message.revoked`, `message.deleted`
 - Conexão/grupo: `presence.changed`, `receipt.changed`, `group.participants_changed`, `group.joined`, `call.received`, `connection.changed`, `chat.archived`
 - LLM/tool: `llm.before`, `llm.after`, `tool.before`, `tool.after`
-- Core: `contact.updated`, `contact.ai_toggled`, `contact.tagged`, `tag.created/updated/deleted`, `config.changed`, `tool_override.changed`, `plugin.loaded/enabled/disabled/settings.changed`, `app.startup/shutdown`
+- Core: `contact.updated`, `contact.ai_toggled`, `contact.tagged`, `contact.untagged` (por tag removida), `tag.created/updated/deleted`, `config.changed`, `tool_override.changed`, `execution.started/ended`, `plugin.loaded/enabled/disabled/settings.changed`, `app.startup/shutdown`
 
 **Não chame `gowa_client.send_message` dentro de handler de `message.sent`** — gera loop infinito (a send produz outro `message.sent`).
 
@@ -256,12 +256,18 @@ FILTERS = {
 }
 ```
 
-**Filters disponíveis** (tabela completa com tipo do `value` em `CLAUDE.md`):
+**Filters disponíveis** (tabela completa com tipo do `value` e `ctx.extras` em `CLAUDE.md`):
 
 | Filter | `value` | `None` faz |
 |---|---|---|
 | `filter.webhook.payload` | `dict` (raw GOWA) | webhook responde 200 sem processar |
-| `filter.message.before_save` | `dict` (mensagem tipada) | mensagem ignorada |
+| `filter.message.before_save` | `dict` (mensagem tipada com `media_extras`) | mensagem ignorada |
+| `filter.message.outgoing` | `dict` (echo do celular do usuário) | echo ignorado |
+| `filter.transcription.should_run` | `bool` (default `True`) | pula transcribe/describe (mesmo que `False`) |
+| `filter.transcription.result` | `str` (transcrição/descrição já gerada) | trata como vazia |
+| `filter.media.unknown` | `None` ou `dict` (último recurso, antes do "ignored") | cai no "ignored" original |
+| `filter.contact.tags` | `list[str]` (tags pretendidas) | mantém tags atuais |
+| `filter.event.before_emit` | `dict` (payload de qualquer evento exceto lifecycle) | cancela o emit |
 | `filter.system_prompt` | `str` | system prompt vazio |
 | `filter.llm.messages` | `list[dict]` | LLM não é chamado |
 | `filter.llm.tools` | `list[dict]` | LLM chamado sem tools |

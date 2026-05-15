@@ -555,7 +555,42 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       ${displayContent && displayContent !== '[Áudio recebido]' && displayContent !== '[Áudio]' && !displayContent.startsWith('[Transcrição do áudio]')
                         ? html`<span class="block text-[12px] text-wa-secondary italic" dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`
                         : null}
-                    ` : html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`}
+                    ` : m.media_type === 'video' ? html`
+                      <video
+                        controls
+                        preload="metadata"
+                        src="${m._isLocalBlob ? m.media_path : '/' + m.media_path}"
+                        class="rounded-[4px] max-w-full max-h-[320px] mb-1"
+                        style="min-width:180px"
+                      ></video>
+                      ${displayContent && !displayContent.startsWith('[Vídeo')
+                        ? html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`
+                        : null}
+                    ` : m.media_type === 'sticker' ? html`
+                      <img
+                        src="${m._isLocalBlob ? m.media_path : '/' + m.media_path}"
+                        alt="Sticker"
+                        class="max-w-[160px] max-h-[160px] mb-1"
+                        loading="lazy"
+                      />
+                    ` : (m.media_type === 'location' || m.media_type === 'live_location') ? (() => {
+                        // media_path here is "geo:lat,lng" (see _extract_media)
+                        const m_path = m.media_path || '';
+                        const coords = m_path.startsWith('geo:') ? m_path.slice(4) : '';
+                        const mapsUrl = coords
+                          ? `https://www.google.com/maps?q=${encodeURIComponent(coords)}`
+                          : null;
+                        return html`
+                          <div class="flex flex-col gap-1">
+                            <a
+                              href=${mapsUrl || '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="text-wa-teal text-[13px] underline"
+                            >📍 ${displayContent || coords || 'Localização'}</a>
+                          </div>
+                        `;
+                      })() : html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`}
                     <span class="float-right ml-[8px] mt-[4px] text-[11px] leading-[15px] whitespace-nowrap text-wa-secondary">
                       ${!isUser ? (() => {
                         if (isFailed) return html`<${FailedIcon} />${!m.media_type && m._localId ? html`<${RetryIcon} onClick=${() => handleRetry(m._localId, m.content)} />` : ''}`;
