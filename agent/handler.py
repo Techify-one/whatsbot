@@ -16,7 +16,13 @@ from agent.tools import CORE_TOOLS
 from db.repositories import message_repo, contact_repo, tool_override_repo
 from agent.execution import track_step
 from plugins.context import ToolContext, PromptContext
-from plugins.events import emit as emit_event, apply_filter, apply_filter_sync
+from plugins.events import (
+    emit as emit_event,
+    apply_filter,
+    apply_filter_sync,
+    emit_with_filter,
+    emit_with_filter_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -580,7 +586,7 @@ class AgentHandler:
                 create_kwargs["tools"] = active_tools
                 create_kwargs["tool_choice"] = "auto"
             _llm_t0 = time.monotonic()
-            emit_event("llm.before", {
+            await emit_with_filter("llm.before", {
                 "phone": sender,
                 "model": self.model,
                 "message_count": len(messages),
@@ -627,12 +633,12 @@ class AgentHandler:
                     args = filtered_args.get("args", args)
 
                     _tool_t0 = time.monotonic()
-                    emit_event("tool.before", {
+                    await emit_with_filter("tool.before", {
                         "phone": sender, "tool_name": tool_name, "args": args,
                         "ts": time.time(),
                     })
                     feedback = self._dispatch_tool(contact, tool_name, args)
-                    emit_event("tool.after", {
+                    await emit_with_filter("tool.after", {
                         "phone": sender, "tool_name": tool_name, "args": args,
                         "result": feedback, "error": None,
                         "latency_ms": int((time.monotonic() - _tool_t0) * 1000),
@@ -695,7 +701,7 @@ class AgentHandler:
                     "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
                     "total_tokens": getattr(usage, "total_tokens", 0) or 0,
                 }
-            emit_event("llm.after", {
+            await emit_with_filter("llm.after", {
                 "phone": sender,
                 "model": self.model,
                 "reply": reply,
@@ -712,7 +718,7 @@ class AgentHandler:
         except Exception as e:
             logger.error("LLM error for %s: %s", sender, e)
             track_step("error", {"error": str(e), "phase": "llm_call"}, status="error")
-            emit_event("llm.after", {
+            await emit_with_filter("llm.after", {
                 "phone": sender, "model": self.model,
                 "reply": "", "tool_calls": [], "usage": None,
                 "error": str(e),
@@ -793,7 +799,7 @@ class AgentHandler:
                 create_kwargs["tools"] = active_tools
                 create_kwargs["tool_choice"] = "auto"
             _llm_t0 = time.monotonic()
-            emit_event("llm.before", {
+            emit_with_filter_sync("llm.before", {
                 "phone": sender, "model": self.model,
                 "message_count": len(messages),
                 "has_tools": bool(active_tools),
@@ -838,12 +844,12 @@ class AgentHandler:
                     args = filtered_args.get("args", args)
 
                     _tool_t0 = time.monotonic()
-                    emit_event("tool.before", {
+                    emit_with_filter_sync("tool.before", {
                         "phone": sender, "tool_name": tool_name, "args": args,
                         "ts": time.time(),
                     })
                     feedback = self._dispatch_tool(contact, tool_name, args)
-                    emit_event("tool.after", {
+                    emit_with_filter_sync("tool.after", {
                         "phone": sender, "tool_name": tool_name, "args": args,
                         "result": feedback, "error": None,
                         "latency_ms": int((time.monotonic() - _tool_t0) * 1000),
@@ -909,7 +915,7 @@ class AgentHandler:
                     "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
                     "total_tokens": getattr(usage, "total_tokens", 0) or 0,
                 }
-            emit_event("llm.after", {
+            emit_with_filter_sync("llm.after", {
                 "phone": sender, "model": self.model, "reply": reply,
                 "tool_calls": executed_tools, "usage": usage_dict,
                 "latency_ms": int((time.monotonic() - _llm_t0) * 1000),
@@ -921,7 +927,7 @@ class AgentHandler:
         except Exception as e:
             logger.error("LLM error for %s: %s", sender, e)
             track_step("error", {"error": str(e), "phase": "llm_call"}, status="error")
-            emit_event("llm.after", {
+            emit_with_filter_sync("llm.after", {
                 "phone": sender, "model": self.model,
                 "reply": "", "tool_calls": [], "usage": None,
                 "error": str(e),

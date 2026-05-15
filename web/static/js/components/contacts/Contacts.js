@@ -454,7 +454,17 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
         const isViewing = phone === selectedRef.current && pageVisibleRef.current;
         let lastPreview = (message.content || '').substring(0, 80);
         if (message.media_type === 'image') lastPreview = message.content || '📷 Imagem';
-        if (message.media_type === 'audio') lastPreview = '🎤 Áudio';
+        else if (message.media_type === 'audio') lastPreview = '🎤 Áudio';
+        else if (message.media_type === 'video') lastPreview = message.content || '🎥 Vídeo';
+        else if (message.media_type === 'sticker') lastPreview = '🎨 Sticker';
+        else if (message.media_type === 'document') lastPreview = message.content || '📄 Documento';
+        else if (message.media_type === 'location') lastPreview = message.content || '📍 Localização';
+        else if (message.media_type === 'live_location') lastPreview = '📍 Localização ao vivo';
+        else if (message.media_type === 'poll') lastPreview = message.content || '📊 Enquete';
+        else if (message.media_type === 'interactive') lastPreview = message.content || '↩️ Resposta';
+        else if (message.media_type === 'order') lastPreview = message.content || '🛒 Pedido';
+        else if (message.media_type === 'product') lastPreview = '🏷️ Produto';
+        else if (message.media_type === 'contact' || message.media_type === 'contacts') lastPreview = message.content || '👤 Contato';
         updated[idx] = {
           ...updated[idx],
           last_message: lastPreview,

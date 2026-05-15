@@ -9,7 +9,7 @@ import httpx
 
 from server.auth import generate_salt, hash_password
 from server.helpers import _ok, _err, _mask_key
-from plugins.events import emit as emit_event
+from plugins.events import emit as emit_event, emit_with_filter
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def register_routes(app, deps):
         )
 
         await ws_manager.broadcast("config_saved", {})
-        emit_event("config.changed", {
+        await emit_with_filter("config.changed", {
             "keys_changed": keys_changed,
             "ts": time.time(),
         })

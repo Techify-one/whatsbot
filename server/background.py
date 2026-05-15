@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from db.repositories import contact_repo
-from plugins.events import emit as emit_event
+from plugins.events import emit as emit_event, emit_with_filter
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ async def status_poll_loop(deps):
             # Plugin event: connection state transitions only (not every poll).
             qr_required = bool(state.qr_data is not None and not connected)
             if (last_connected, last_qr_required) != (connected, qr_required):
-                emit_event("connection.changed", {
+                await emit_with_filter("connection.changed", {
                     "is_connected": bool(connected),
                     "is_logged_in": bool(connected),  # GOWA conflates these
                     "qr_required": qr_required,

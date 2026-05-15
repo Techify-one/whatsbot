@@ -11,7 +11,7 @@ from gowa.client import GOWASendError, extract_msg_id
 
 from db.repositories import contact_repo, message_repo
 from server.helpers import _ok, _err, parse_split_reply
-from plugins.events import emit as emit_event, apply_filter
+from plugins.events import emit as emit_event, apply_filter, emit_with_filter
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ def register_routes(app, deps):
         })
 
         # Plugin event: manual operator send
-        emit_event("message.sent", {
+        await emit_with_filter("message.sent", {
             "phone": phone, "text": message, "msg_id": msg_id,
             "media_type": None, "media_path": None,
             "source": "operator", "status": "operator",
@@ -369,7 +369,7 @@ def register_routes(app, deps):
             await ws_manager.broadcast("new_message", {
                 "phone": phone, "message": msg_data,
             })
-            emit_event("message.sent", {
+            await emit_with_filter("message.sent", {
                 "phone": phone, "text": part, "msg_id": msg_id,
                 "media_type": None, "media_path": None,
                 "source": "private_ai", "status": "sent",
@@ -462,7 +462,7 @@ def register_routes(app, deps):
             logger.error("[Retry] Failed to update message status for %s: %s", phone, e)
 
         state.msg_count += 1
-        emit_event("message.sent", {
+        await emit_with_filter("message.sent", {
             "phone": phone, "text": message, "msg_id": msg_id,
             "media_type": None, "media_path": None,
             "source": "retry", "status": "sent",
@@ -531,7 +531,7 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
-        emit_event("message.sent", {
+        await emit_with_filter("message.sent", {
             "phone": phone, "text": caption, "msg_id": msg_id,
             "media_type": "image", "media_path": rel_path,
             "source": "operator", "status": "operator",
@@ -598,7 +598,7 @@ def register_routes(app, deps):
                             status="operator", msg_id=msg_id)
 
         await ws_manager.broadcast("new_message", {"phone": phone, "message": msg_data})
-        emit_event("message.sent", {
+        await emit_with_filter("message.sent", {
             "phone": phone, "text": "", "msg_id": msg_id,
             "media_type": "audio", "media_path": rel_path,
             "source": "operator", "status": "operator",
@@ -640,7 +640,7 @@ def register_routes(app, deps):
             "phone": phone,
             "ai_enabled": result,
         })
-        emit_event("contact.ai_toggled", {
+        await emit_with_filter("contact.ai_toggled", {
             "phone": phone, "ai_enabled": result, "ts": time.time(),
         })
         return _ok({"ai_enabled": result})
@@ -688,7 +688,7 @@ def register_routes(app, deps):
                 contact_repo.set_observations(contact.id, new_obs)
             return contact.info
         info = await asyncio.to_thread(_update)
-        emit_event("contact.updated", {
+        await emit_with_filter("contact.updated", {
             "phone": phone, "info": info, "ts": time.time(),
         })
         return _ok(info)

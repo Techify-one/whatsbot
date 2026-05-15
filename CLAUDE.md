@@ -330,8 +330,9 @@ Toggle do plugin = tudo-ou-nada: enable liga handlers e filters; disable derruba
 
 | Evento | Quando dispara | Payload chave |
 |--------|---------------|---------------|
-| `message.received` | Inbound user msg (inclui group sem @mention) | `phone, name, text, raw_text, msg_id, media_type, media_path, is_group, group_jid, individual_phone, raw` |
-| `message.sent` | Resposta IA, operator send, image/audio panel, retry, private @ia, echo do próprio celular | `phone, text, msg_id, media_type, media_path, source, status` — `source ∈ {ai, operator, private_ai, retry, echo}` |
+| `message.received` | Inbound user msg (inclui group sem @mention). **Emitido ANTES do save** — listener que precisa ler do DB deve usar `message.saved` | `phone, name, text, raw_text, msg_id, media_type, media_path, media_extras, is_group, group_jid, individual_phone, raw` |
+| `message.saved` | **NOVO** — emitido DEPOIS do INSERT no DB, em todos os 3 sites de save inbound (text batch, media batch, group_no_mention) | `phone, text, msg_id, media_type, media_path, media_extras, is_group, group_jid, source` — `source ∈ {batch_text, batch_media, group_no_mention}` |
+| `message.sent` | Resposta IA, operator send, image/audio panel, retry, private @ia, echo do próprio celular | `phone, text, msg_id, media_type, media_path, media_extras, source, status` — `source ∈ {ai, operator, private_ai, retry, echo}` |
 | `message.any` *(alias)* | Re-dispatch de `received` + `sent` com `direction: "in"\|"out"` | igual ao original + `direction` |
 | `message.reaction` | Reação emoji em mensagem | `id, phone, reaction, reacted_message_id, is_from_me` |
 | `message.edited` | Mensagem editada | `id, phone, original_message_id, body` |
@@ -354,8 +355,10 @@ Toggle do plugin = tudo-ou-nada: enable liga handlers e filters; disable derruba
 | `tool.before` / `tool.after` | `_dispatch_tool`. `after`: `result, error, latency_ms` |
 | `contact.updated` | PUT `/api/contacts/{phone}/info` |
 | `contact.ai_toggled` | POST `/api/contacts/{phone}/toggle-ai` |
-| `contact.tagged` | PUT `/api/contacts/{phone}/tags` |
+| `contact.tagged` | PUT `/api/contacts/{phone}/tags` (snapshot completo da lista de tags) |
+| `contact.untagged` | **NOVO** — um emit POR tag removida em PUT `/api/contacts/{phone}/tags` (`{phone, tag, ts}`) |
 | `tag.created` / `tag.updated` / `tag.deleted` | tag endpoints |
+| `execution.started` / `execution.ended` | **NOVO** — wrappers async `astart_execution`/`aend_execution`. `ended` carrega `error: str\|None` e `duration_ms` |
 | `config.changed` | PUT `/api/config` (com `keys_changed`) |
 | `tool_override.changed` | PUT `/api/tools/{name}` |
 | `plugin.loaded` / `plugin.enabled` / `plugin.disabled` / `plugin.settings.changed` | lifecycle do plugin |
@@ -365,18 +368,26 @@ Chave especial `*` — subscrever via `EVENT_HANDLERS = {"*": fn}` recebe todo e
 
 **Filters disponíveis** (ponto de modificação/cancelamento):
 
-| Filter | Local | Tipo do valor | `None` faz |
-|--------|-------|---------------|------------|
-| `filter.webhook.payload` | `/api/webhook` antes de qualquer parse | `dict` (body raw GOWA) | Webhook responde 200 sem processar |
-| `filter.message.before_save` | inbound depois do parse | `dict` (mensagem tipada com `raw`) | Mensagem ignorada (nem salva nem responde) |
-| `filter.system_prompt` | antes do LLM | `str` | System prompt vira vazio |
-| `filter.llm.messages` | antes do LLM | `list[dict]` (formato OpenAI) | LLM não é chamado |
-| `filter.llm.tools` | antes do LLM | `list[dict]` (schemas) | LLM chamado sem tools |
-| `filter.tool.args` | `_dispatch_tool` antes do executor | `{tool_name, args}` | Tool pulada |
-| `filter.tool.result` | `_dispatch_tool` depois do executor | `str` (feedback pro LLM) | LLM recebe string vazia |
-| `filter.reply.raw` | `_send_reply` antes do split | `str` | Nada é enviado |
-| `filter.reply.parts` | depois do split | `list[str]` | Nada é enviado |
-| `filter.reply.part` | cada parte antes do GOWA (vale pra send manual também) | `str` | Aquela parte é pulada |
+| Filter | Local | Tipo do valor | `None` faz | `ctx.extras` |
+|--------|-------|---------------|------------|--------------|
+| `filter.webhook.payload` | `/api/webhook` antes de qualquer parse | `dict` (body raw GOWA) | Webhook responde 200 sem processar | — |
+| `filter.message.before_save` | inbound depois do parse | `dict` (mensagem tipada com `raw`, inclui `media_extras`) | Mensagem ignorada (nem salva nem responde) | `phone` |
+| `filter.message.outgoing` | **NOVO** — antes de salvar/emitir um `message.sent` de echo (mensagem enviada do celular fora do app) | `dict` (mensagem tipada, `is_from_me=True`, `source="echo"`) | Echo ignorado (não salva nem emite) | `phone` |
+| `filter.transcription.should_run` | **NOVO** — wrapper `_maybe_transcribe`, ANTES de chamar `transcribe_audio`/`describe_image` (cobre os 4 call sites) | `bool` (default `True`) | Pula a transcrição (mesmo efeito de `False`) | `phone, media_kind ∈ {audio,image}, media_path, is_group, group_jid, source ∈ {batch,echo,group_no_mention}` |
+| `filter.transcription.result` | **NOVO** — depois da chamada de transcribe/describe, antes de a string ser usada | `str` | Trata como se a transcrição fosse vazia | igual ao `should_run` + `model` |
+| `filter.media.unknown` | **NOVO** — último recurso antes da regra "ignored", quando nenhum media type built-in casou | `None` (default) ou `dict` `{media_type, media_path, text, media_extras}` | Cai no "ignored" original | `phone, raw` |
+| `filter.contact.tags` | **NOVO** — `PUT /api/contacts/{phone}/tags` antes de `contact.set_tags` | `list[str]` (tags pretendidas) | Mantém tags atuais | `phone, previous_tags` |
+| `filter.event.before_emit` | **NOVO** — wrap interno do `emit_with_filter`. Recebe o payload de QUALQUER evento prestes a sair (exceto lifecycle) | `dict` (payload) | Cancela o emit | `event_name` |
+| `filter.system_prompt` | antes do LLM | `str` | System prompt vira vazio | `phone` |
+| `filter.llm.messages` | antes do LLM | `list[dict]` (formato OpenAI) | LLM não é chamado | `phone, model` |
+| `filter.llm.tools` | antes do LLM | `list[dict]` (schemas) | LLM chamado sem tools | `phone, model` |
+| `filter.tool.args` | `_dispatch_tool` antes do executor | `{tool_name, args}` | Tool pulada | `phone` |
+| `filter.tool.result` | `_dispatch_tool` depois do executor | `str` (feedback pro LLM) | LLM recebe string vazia | `phone, tool_name` |
+| `filter.reply.raw` | `_send_reply` antes do split | `str` | Nada é enviado | `phone` |
+| `filter.reply.parts` | depois do split | `list[str]` | Nada é enviado | `phone` |
+| `filter.reply.part` | cada parte antes do GOWA (vale pra send manual também) | `str` | Aquela parte é pulada | `phone` |
+
+**Lifecycle events bypassam `filter.event.before_emit`** — `plugin.loaded/enabled/disabled/settings.changed` e `app.startup/shutdown` chamam `emit()` direto. Plugin não pode bloquear seu próprio carregamento.
 
 **Assinaturas**:
 
@@ -412,13 +423,37 @@ FILTERS = {
 **Boas práticas**:
 
 - Filter síncrono trava o pipeline — mantenha rápido. Persistência pesada/network vai num event handler.
+- **Para reagir a mensagem JÁ salva**: assine `message.saved`, não `message.received` — o último é emitido ANTES do INSERT no DB e listener que leia do DB pode race.
+- **Pra controlar transcrição** (decisão "transcrever ou não, e como"): use `filter.transcription.should_run` + `filter.transcription.result`, nunca remova o campo `audio`/`image` no `filter.webhook.payload` — fazer isso quebra o player no histórico.
 - NÃO chamar `gowa_client.send_message` dentro de handler de `message.sent` → loop infinito (a send produz outro `message.sent`).
 - Filtre por `media_type` / `source` / `is_group` no INÍCIO do handler. O bus entrega tudo.
 - Persista estado entre eventos em tabelas `plugin_<id>_*` (via `ctx.plugin_db` + `from sqlalchemy import text`), nunca em globals — não sobrevivem ao restart.
 - `payload["raw"]` carrega o payload bruto do GOWA (potencialmente grande, com base64 de áudio). Plugins que logam tudo devem cortar `raw` antes de serializar.
 - Restart obrigatório no toggle do plugin: `plugin.enabled`/`plugin.disabled` emitem ANTES do `os._exit`; o novo processo emite `plugin.loaded` no boot.
 
-Plugins de exemplo bundled em `assets/plugin_examples/`: `event_logger` (assina `*`), `auto_signature` (`filter.reply.part`), `blacklist` (`filter.message.before_save` → `None`).
+Plugins de exemplo bundled em `assets/plugin_examples/`: `event_logger` (assina `*`), `auto_signature` (`filter.reply.part`), `blacklist` (`filter.message.before_save` → `None`), `transcricao_grupos` (`filter.transcription.should_run` — controle de transcrição por grupo via UI + DB).
+
+### Media types suportados
+
+O webhook detecta os tipos abaixo e os converte em `parsed_msg` (`media_type` + `media_path` + `media_extras`):
+
+| `media_type` | Campo no payload GOWA | `media_path` | `media_extras` típico |
+|---|---|---|---|
+| `image` | `image` (str ou `{path, caption, mimetype}`) | path do arquivo | `{caption, mimetype}` |
+| `audio` | `audio` ou `video_note` (str ou `{path, duration, mimetype}`) | path do arquivo | `{duration_ms, mimetype, is_voice_note}` |
+| `video` | `video` (str ou `{path, caption, duration, mimetype}`) | path do arquivo | `{caption, duration_ms, mimetype}` |
+| `sticker` | `sticker` (str ou `{path, is_animated, mimetype}`) | path do arquivo | `{is_animated, mimetype}` |
+| `document` | `document` (str ou `{path, file_name, mimetype, caption}`) | path do arquivo | `{file_name, mimetype}` |
+| `location` | `location` (`{latitude, longitude, name, address}`) | `geo:lat,lng` | `{lat, lng, name, address}` |
+| `live_location` | `live_location` | `geo:lat,lng` | `{lat, lng}` |
+| `poll` | `poll` (`{name, options[]}`) | `None` | `{name, options}` |
+| `interactive` | `buttons_response` / `list_response` | `None` | `{button_id, title}` ou `{row_id, title}` |
+| `order` | `order` | `None` | `{item_count, total, currency}` |
+| `product` | `product` | `None` | `{product_id, title}` |
+| `contact` | `contact` (single vCard) | `None` | `{contacts: [{name, phone}]}` |
+| `contacts` | `contacts_array` (lista) | `None` | `{contacts: [...]}` |
+
+Plugins podem registrar tipos completamente customizados via `filter.media.unknown` — devolva `{media_type, media_path, text, media_extras}` e a mensagem vira aquele tipo.
 
 ### Criar um plugin novo
 
