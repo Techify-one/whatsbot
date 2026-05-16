@@ -590,6 +590,31 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                             >📍 ${displayContent || coords || 'Localização'}</a>
                           </div>
                         `;
+                      })() : m.media_type === 'document' ? (() => {
+                        const docUrl = m._isLocalBlob ? m.media_path : '/' + m.media_path;
+                        // Nome real do arquivo: basename do path, sem o prefixo
+                        // "<timestamp>-" que o GOWA adiciona ao salvar.
+                        const docName = ((m.media_path || '')
+                          .replace(/\\/g, '/').split('/').pop() || '')
+                          .replace(/^\d{8,}-/, '') || 'Documento';
+                        // displayContent é o placeholder "[Documento recebido: …]"
+                        // ou uma legenda real digitada pelo contato.
+                        const docCaption = displayContent
+                          && !/^\[Documento (?:recebido|enviado):/.test(displayContent)
+                          ? displayContent : null;
+                        return html`
+                          <div class="flex flex-col gap-1">
+                            <a
+                              href=${docUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="flex items-center gap-1 text-wa-teal text-[13px] underline break-all"
+                            >📄 ${docName}</a>
+                            ${docCaption
+                              ? html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(docCaption) }}></span>`
+                              : null}
+                          </div>
+                        `;
                       })() : html`<span dangerouslySetInnerHTML=${{ __html: formatWhatsApp(displayContent) }}></span>`}
                     <span class="float-right ml-[8px] mt-[4px] text-[11px] leading-[15px] whitespace-nowrap text-wa-secondary">
                       ${!isUser ? (() => {

@@ -167,6 +167,14 @@ def _extract_media(data: dict, *, is_from_me: bool, existing_text: str) -> dict:
                 media_path = p
                 document_name = (info.get("file_name")
                                  or info.get("filename") or "")
+                if not document_name:
+                    # GOWA com auto-download não envia o filename no objeto
+                    # `document` (só `path` + `caption`). O arquivo é salvo
+                    # como "statics/media/<unix-ts>-<nome original.ext>", então
+                    # recuperamos o nome real do basename do path.
+                    base = p.replace("\\", "/").rsplit("/", 1)[-1]
+                    mm = re.match(r"^\d{8,}-(.+)$", base)
+                    document_name = mm.group(1) if mm else base
                 caption = (info.get("caption") or "").strip()
                 if not text and caption:
                     text = caption
@@ -718,7 +726,8 @@ def register_routes(app, deps):
             text_msg_ids: list[str] = []
             media_items: list[dict] = []
             for item in items:
-                if item.get("image_path") or item.get("audio_path"):
+                if (item.get("image_path") or item.get("audio_path")
+                        or item.get("media_type")):
                     media_items.append(item)
                 else:
                     text_parts.append(item.get("text", ""))
@@ -794,12 +803,14 @@ def register_routes(app, deps):
                 image_path = item.get("image_path")
                 audio_path = item.get("audio_path")
 
-                media_label = "image" if image_path else "audio"
+                # media_type/media_path resolved by _extract_media; fall back to
+                # the image/audio paths for items predating the typed fields.
+                media_label = item.get("media_type") or ("image" if image_path else "audio")
                 logger.info("[Batch] Processing %s from %s", media_label, phone)
 
                 _saved_text = text or ("[Áudio recebido]" if audio_path else "")
-                _saved_media_type = "image" if image_path else "audio"
-                _saved_media_path = image_path or audio_path
+                _saved_media_type = item.get("media_type") or ("image" if image_path else "audio")
+                _saved_media_path = item.get("media_path") or image_path or audio_path
                 contact.add_message(
                     "user", _saved_text,
                     media_type=_saved_media_type,
@@ -811,6 +822,7 @@ def register_routes(app, deps):
                     "msg_id": item.get("msg_id"),
                     "media_type": _saved_media_type,
                     "media_path": _saved_media_path,
+                    "media_extras": item.get("media_extras"),
                     "is_group": contact.is_group,
                     "source": "batch_media",
                     "ts": time.time(),
@@ -1602,6 +1614,9 @@ def register_routes(app, deps):
             "text": display_text,
             "image_path": image_path,
             "audio_path": audio_path,
+            "media_type": media_type,
+            "media_path": media_path,
+            "media_extras": media_extras,
             "msg_id": msg_id,
         })
 
