@@ -592,16 +592,11 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                         `;
                       })() : m.media_type === 'document' ? (() => {
                         const docUrl = m._isLocalBlob ? m.media_path : '/' + m.media_path;
-                        // Nome real do arquivo: basename do path, sem o prefixo
-                        // "<timestamp>-" que o GOWA adiciona ao salvar.
-                        const docName = ((m.media_path || '')
-                          .replace(/\\/g, '/').split('/').pop() || '')
-                          .replace(/^\d{8,}-/, '') || 'Documento';
-                        // displayContent é o placeholder "[Documento recebido: …]"
-                        // ou uma legenda real digitada pelo contato.
-                        const docCaption = displayContent
-                          && !/^\[Documento (?:recebido|enviado):/.test(displayContent)
-                          ? displayContent : null;
+                        // content = "[Documento recebido: nome.ext]" + opcional "\nlegenda"
+                        const dc = displayContent || '';
+                        const mm = dc.match(/^\[Documento (?:recebido|enviado): ([^\]]+)\]\n?([\s\S]*)$/);
+                        const docName = mm ? mm[1] : 'Documento';
+                        const docCaption = (mm ? mm[2] : dc).trim();
                         return html`
                           <div class="flex flex-col gap-1">
                             <a

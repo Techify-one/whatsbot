@@ -416,6 +416,27 @@ class GOWAClient:
                 return results
         return []
 
+    def get_message_filename(self, chat_jid: str, msg_id: str) -> str:
+        """Resolve a media message's original filename from GOWA chat storage.
+
+        GOWA's webhook omits the document filename when auto-download is
+        enabled (``buildAutoDownloadPayload`` sends only ``path``/``caption``
+        and the on-disk path is UUID-based, so the name can't be recovered
+        from it). But GOWA persists ``filename`` in its chat storage *before*
+        forwarding the webhook and exposes it via ``GET /chat/{jid}/messages``
+        — so we look the message up by id.
+        """
+        if not chat_jid or not msg_id:
+            return ""
+        try:
+            messages = self.get_chat_messages(chat_jid, limit=25)
+        except Exception:
+            return ""
+        for m in messages:
+            if isinstance(m, dict) and str(m.get("id", "")) == str(msg_id):
+                return (m.get("filename") or "").strip()
+        return ""
+
     # ── Phone Check ────────────────────────────────────────────────
 
     def check_phone(self, phone: str) -> dict:

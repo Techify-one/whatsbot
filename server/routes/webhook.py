@@ -167,28 +167,24 @@ def _extract_media(data: dict, *, is_from_me: bool, existing_text: str) -> dict:
                 media_path = p
                 document_name = (info.get("file_name")
                                  or info.get("filename") or "")
-                if not document_name:
-                    # GOWA com auto-download não envia o filename no objeto
-                    # `document` (só `path` + `caption`). O arquivo é salvo
-                    # como "statics/media/<unix-ts>-<nome original.ext>", então
-                    # recuperamos o nome real do basename do path.
-                    base = p.replace("\\", "/").rsplit("/", 1)[-1]
-                    mm = re.match(r"^\d{8,}-(.+)$", base)
-                    document_name = mm.group(1) if mm else base
-                caption = (info.get("caption") or "").strip()
-                if not text and caption:
-                    text = caption
-                elif not text:
-                    label = document_name or "documento"
-                    text = (f"[Documento enviado: {label}]" if is_from_me
-                            else f"[Documento recebido: {label}]")
-                if document_name or info.get("mimetype"):
-                    extras = {
-                        k: v for k, v in {
-                            "file_name": document_name or None,
-                            "mimetype": info.get("mimetype"),
-                        }.items() if v is not None
-                    } or None
+                # GOWA echoes the document caption into the top-level body,
+                # so `existing_text` may already equal it.
+                caption = (info.get("caption") or "").strip() or text
+                # With auto-download ON, the GOWA webhook does NOT carry the
+                # original filename and the on-disk path is UUID-based, so it
+                # can't be recovered here. The webhook layer resolves the real
+                # name via GOWA's chat-storage API and rebuilds `text`.
+                label = document_name or "documento"
+                verb = "enviado" if is_from_me else "recebido"
+                text = (f"[Documento {verb}: {label}]"
+                        + (f"\n{caption}" if caption else ""))
+                extras = {
+                    k: v for k, v in {
+                        "file_name": document_name or None,
+                        "mimetype": info.get("mimetype"),
+                        "caption": caption or None,
+                    }.items() if v is not None
+                } or None
 
     # — location ——————————————————————————————————————————
     if media_type is None:
@@ -1261,6 +1257,28 @@ def register_routes(app, deps):
                       or data.get("from", ""))
 
         is_group = "@g.us" in chat_jid
+
+        # ── Resolve document filename ─────────────────────────────────
+        # GOWA's webhook omits the original filename for documents when
+        # auto-download is enabled (buildAutoDownloadPayload sends only
+        # path+caption, and the on-disk path is UUID-based). GOWA *does*
+        # persist `filename` in its chat storage BEFORE forwarding the
+        # webhook, so we look it up via GET /chat/{jid}/messages.
+        if media_type == "document":
+            try:
+                real_name = await asyncio.to_thread(
+                    gowa_client.get_message_filename, chat_jid, msg_id)
+            except Exception as e:
+                logger.warning("[Webhook] document filename lookup failed: %s", e)
+                real_name = ""
+            doc_caption = (media_extras or {}).get("caption") or ""
+            doc_label = real_name or document_name or "documento"
+            verb = "enviado" if is_from_me else "recebido"
+            text = (f"[Documento {verb}: {doc_label}]"
+                    + (f"\n{doc_caption}" if doc_caption else ""))
+            if real_name:
+                media_extras = {**(media_extras or {}), "file_name": real_name}
+                logger.info("[Webhook] document filename resolved: %s", real_name)
 
         if is_group:
             # For groups: route replies to the group, track individual sender
