@@ -571,7 +571,7 @@ class _FakeTechifyResp:
 def _fake_async_client(resp):
     """Build a patch target mimicking httpx.AsyncClient as an async CM."""
     fake_client = MagicMock()
-    fake_client.get = AsyncMock(return_value=resp)
+    fake_client.post = AsyncMock(return_value=resp)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=fake_client)
     cm.__aexit__ = AsyncMock(return_value=False)
@@ -598,13 +598,10 @@ check("GET /api/setup/key-status -> pending", r.json()["data"]["status"] == "pen
 _provisioned_key = "sk-techify-provisioned-abcdef123456"
 with patch("server.routes.setup.httpx.AsyncClient",
            _fake_async_client(_FakeTechifyResp(200, {
-               "status": "ready", "api_key": _provisioned_key,
-               "credit": "5.00", "currency": "BRL"}))):
+               "status": "ready", "api_key": _provisioned_key}))):
     r = client.get("/api/setup/key-status")
 check("GET /api/setup/key-status (ready) -> 200", r.status_code == 200)
 check("GET /api/setup/key-status -> ready", r.json()["data"]["status"] == "ready")
-check("GET /api/setup/key-status -> credit passed through",
-      r.json()["data"].get("credit") == "5.00")
 check("GET /api/setup/key-status -> key saved to config",
       config_repo.get("openrouter_api_key") == _provisioned_key)
 

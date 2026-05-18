@@ -9,13 +9,6 @@ const html = htm.bind(h);
 const STEPS = ['Conectar', 'Chave de API', 'Testar'];
 const MAX_POLL_ATTEMPTS = 75; // ~2.5 min at 2s interval — beyond the Techify TTL
 
-function formatCredit(credit, currency) {
-  if (credit == null || credit === '') return 'crédito grátis';
-  const val = String(credit).replace('.', ',');
-  if (!currency || currency === 'BRL') return `R$ ${val} de crédito grátis`;
-  return `${val} ${currency} de crédito grátis`;
-}
-
 function StepDots({ step }) {
   return html`
     <div class="flex items-center justify-center gap-2 mb-6">
@@ -79,8 +72,6 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
   // keyState: 'idle' | 'requesting' | 'polling' | 'ready' | 'error'
   const [keyState, setKeyState] = useState('idle');
   const [keyError, setKeyError] = useState('');
-  const [credit, setCredit] = useState(null);
-  const [currency, setCurrency] = useState(null);
   const pollAttemptsRef = useRef(0);
   const hasKey = !!(config && config.openrouter_api_key && config.openrouter_api_key.length > 0);
 
@@ -109,8 +100,6 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
       if (stopped) return;
       const st = res && res.ok && res.data ? res.data.status : 'error';
       if (st === 'ready') {
-        setCredit(res.data.credit);
-        setCurrency(res.data.currency);
         setKeyState('ready');
       } else if (st === 'expired') {
         setKeyError('A solicitação expirou. Toque para tentar de novo.');
@@ -201,7 +190,7 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
           <div class="text-5xl mb-2 text-wa-teal">✓</div>
           <h2 class="text-lg font-semibold text-wa-text mb-1">Chave de API criada!</h2>
           <p class="text-sm text-wa-secondary">
-            Você ganhou <span class="text-wa-teal font-medium">${formatCredit(credit, currency)}</span>.
+            Sua conta foi criada com <span class="text-wa-teal font-medium">crédito grátis</span> para começar.
           </p>
         </div>
       `;

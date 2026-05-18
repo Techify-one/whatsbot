@@ -4,8 +4,10 @@ The setup wizard (frontend) connects WhatsApp, then triggers
 ``POST /api/setup/request-key`` which makes the WhatsBot send a WhatsApp
 message to the Techify provisioning number. Techify creates an account +
 API key keyed by the sender's number. The wizard then polls
-``GET /api/setup/key-status``, which queries Techify server-side and saves
-the key to the config once ready.
+``GET /api/setup/key-status``, which in turn POSTs to Techify's
+``/request-apikey`` endpoint (body ``{"number": ...}``) server-side and
+saves the key to the config once ready. Techify keeps the key downloadable
+for ~1 minute after the account is created.
 """
 
 import asyncio
@@ -15,9 +17,9 @@ import time
 import httpx
 
 from config.settings import (
-    TECHIFY_NEW_ACCOUNT_URL,
     TECHIFY_PROVISION_MESSAGE,
     TECHIFY_PROVISION_NUMBER,
+    TECHIFY_REQUEST_APIKEY_URL,
 )
 from gowa.client import GOWASendError
 from server.helpers import _ok, _err
@@ -68,7 +70,9 @@ def register_routes(app, deps):
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{TECHIFY_NEW_ACCOUNT_URL}/{number}")
+                resp = await client.post(
+                    TECHIFY_REQUEST_APIKEY_URL, json={"number": number}
+                )
             if resp.status_code != 200:
                 logger.warning("Setup: Techify returned HTTP %s", resp.status_code)
                 return _ok({"status": "error"})
@@ -96,10 +100,6 @@ def register_routes(app, deps):
                 max_context_messages=settings.get("max_context_messages", 10),
             )
             logger.info("Setup: API key provisioned and saved.")
-            return _ok({
-                "status": "ready",
-                "credit": data.get("credit"),
-                "currency": data.get("currency"),
-            })
+            return _ok({"status": "ready"})
 
         return _ok({"status": status})
