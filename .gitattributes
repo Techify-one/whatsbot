@@ -1,0 +1,11 @@
+# Scripts de inicialização do Windows PRECISAM de CRLF: o cmd.exe lê arquivos
+# .bat por offset de byte e, sem o \r, passa a ler cada linha deslocada —
+# corrompendo os comandos. O `-text` impede o Git de normalizar o blob para
+# LF, então o conteúdo CRLF é distribuído exatamente como está, valendo para
+# `git clone`, `git archive` e o download ZIP do GitHub.
+*.bat   -text
+*.cmd   -text
+*.ps1   -text
+
+# Scripts shell (Linux/macOS) sempre com LF.
+*.sh    text eol=lf
