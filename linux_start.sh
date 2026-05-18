@@ -96,6 +96,10 @@ free_port "$WHATSBOT_GOWA_PORT"
 pkill -f "$(pwd)/bin/gowa" 2>/dev/null || true
 sleep 1
 
+# uvicorn valida cada --reload-dir antes de subir; numa instalação nova
+# storages/plugins ainda não existe (é criada em runtime por create_app).
+mkdir -p storages/plugins
+
 while true; do
     echo "[linux_start] $(date '+%H:%M:%S') starting uvicorn --reload (port $WHATSBOT_WEB_PORT)..."
     ./venv/bin/python -m uvicorn server.dev:app \
