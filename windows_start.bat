@@ -200,8 +200,8 @@ echo [OK] Ambiente pronto!
 
 endlocal
 
-:: Abrir o navegador automaticamente quando o servidor responder (espera ate ~2 min)
-start "" /min powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 160;$i++){try{Invoke-WebRequest 'http://127.0.0.1:8080/' -TimeoutSec 1 -UseBasicParsing|Out-Null;break}catch{Start-Sleep -Milliseconds 750}};Start-Process 'http://127.0.0.1:8080'"
+:: Abrir browser apos 5s
+start "" cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:8080"
 
 :: Relancar este script no modo servidor (janela oculta) e fechar este terminal
 powershell -Command "Start-Process cmd -ArgumentList '/c title WhatsBot-Server && cd /d %~dp0 && call windows_start.bat --server' -WindowStyle Hidden"
