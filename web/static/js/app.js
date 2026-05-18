@@ -207,6 +207,7 @@ function App({ onLogout, hasPassword }) {
   const [messageStatus, setMessageStatus] = useState(null);
   const [initialContactId, setInitialContactId] = useState(contactIdFromPath);
   const [wizardManual, setWizardManual] = useState(false);
+  const wizardLatchRef = useRef(false);
 
   // Fetch the public plugin manifest once at boot. Errors are non-fatal —
   // the core app keeps running even if plugins fail to load.
@@ -300,16 +301,24 @@ function App({ onLogout, hasPassword }) {
   const needsSetup = config
     && config.setup_completed !== true
     && !config.openrouter_api_key;
-  if (needsSetup || wizardManual) {
+  // Once opened, the wizard stays mounted until the user finishes or closes
+  // it — provisioning a key sets openrouter_api_key, which would otherwise
+  // flip needsSetup to false mid-flow and unmount the wizard before step 3.
+  if (needsSetup || wizardManual) wizardLatchRef.current = true;
+  if (wizardLatchRef.current) {
     return html`<${SetupWizard}
       status=${status}
       qrAvailable=${qrAvailable}
       qrVersion=${qrVersion}
       config=${config}
       canClose=${!needsSetup}
-      onClose=${() => setWizardManual(false)}
+      onClose=${() => { wizardLatchRef.current = false; setWizardManual(false); }}
       onConfigSave=${save}
-      onComplete=${async () => { await save({ setup_completed: true }); setWizardManual(false); }}
+      onComplete=${async () => {
+        wizardLatchRef.current = false;
+        await save({ setup_completed: true });
+        setWizardManual(false);
+      }}
     />`;
   }
 
