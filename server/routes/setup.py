@@ -8,8 +8,11 @@ can be rotated without a client release). Techify creates an account +
 API key keyed by the sender's number. The wizard then polls
 ``GET /api/setup/key-status``, which in turn POSTs to Techify's
 ``/request-apikey`` endpoint (body ``{"number": ...}``) server-side and
-saves the key to the config once ready. Techify keeps the key downloadable
-for ~1 minute after the account is created.
+saves the key to the config once ready. The ``/request-apikey`` response
+also carries ``account_url`` (the customer's account/recharge page) and
+``access_token`` (credential for that account), both persisted to config.
+Techify keeps the key downloadable for ~1 minute after the account is
+created.
 """
 
 import asyncio
@@ -126,9 +129,15 @@ def register_routes(app, deps):
 
         status = data.get("status", "pending")
         api_key = data.get("api_key", "")
+        account_url = data.get("account_url", "")
+        access_token = data.get("access_token", "")
 
         if status == "ready" and api_key:
             settings["openrouter_api_key"] = api_key
+            if account_url:
+                settings["account_url"] = account_url
+            if access_token:
+                settings["access_token"] = access_token
             settings.save()
             agent_handler.update_config(
                 api_key=api_key,

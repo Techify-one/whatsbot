@@ -53,6 +53,7 @@ def register_routes(app, deps):
             "default_ai_enabled": settings.get("default_ai_enabled", True),
             "has_password": bool(settings.get("web_password_hash", "")),
             "setup_completed": settings.get("setup_completed", False),
+            "account_url": settings.get("account_url", ""),
         })
 
     @app.put("/api/config")

@@ -86,6 +86,11 @@ DEFAULT_CONFIG = {
     "web_password_hash": "",
     "web_password_salt": "",
     "setup_completed": False,
+    # Techify account — returned by /request-apikey alongside the API key.
+    # account_url is the customer's account/recharge page; access_token is
+    # the credential for that account (kept server-side only).
+    "account_url": "",
+    "access_token": "",
 }
 
 

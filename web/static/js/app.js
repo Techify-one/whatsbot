@@ -85,7 +85,7 @@ function MenuItem({ active, href, onClick, icon, children }) {
   `;
 }
 
-function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, onReopenSetup }) {
+function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, onReopenSetup, accountUrl }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -141,6 +141,18 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, onRe
           ` : null}
 
           <div class="border-t border-wa-border my-1"></div>
+          ${accountUrl ? html`
+            <a
+              href=${accountUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick=${close}
+              class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 no-underline text-wa-text"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/></svg>
+              Recarregar
+            </a>
+          ` : null}
           <button
             onClick=${() => { onReopenSetup(); close(); }}
             class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 text-wa-text"
@@ -353,7 +365,7 @@ function App({ onLogout, hasPassword }) {
 
   return html`
     <div class="h-dvh overflow-hidden flex flex-col relative">
-      <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} onReopenSetup=${openWizard} />
+      <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} onReopenSetup=${openWizard} accountUrl=${config && config.account_url} />
 
       <main class="flex-1 min-h-0 overflow-auto ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
         ${activePluginScreen
