@@ -61,17 +61,19 @@ Escolha o launcher pelo ambiente onde está rodando:
 
 | Ambiente | Comando | Modo | Hot-reload | Quando usar |
 |---|---|---|---|---|
-| Linux/macOS dev nativo | `./linux_start.sh` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia de desenvolvimento — edita `.py` e o worker reinicia sozinho |
+| Linux dev nativo | `./linux_start.sh` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia de desenvolvimento — edita `.py` e o worker reinicia sozinho |
+| macOS dev nativo | `macos_start.command` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia em macOS; baixa Python e o binário GOWA automaticamente na 1ª execução |
 | Windows dev nativo | `windows_start.bat` | Python local + uvicorn `--reload` | Sim (core + plugins) | Dia-a-dia em Windows; baixa Python automaticamente na 1ª execução |
 | Linux/macOS prod-like | `./docker_start.sh` | `docker compose up --build -d` | Não | Validar o build Docker localmente antes de push pro Coolify |
 | Coolify / servidor remoto | `git push` → deploy automático | Container do [Dockerfile](Dockerfile), `CMD python main.py` | Não | Produção — Coolify clona o repo e roda o Dockerfile |
 
 Parar o servidor:
-- Linux/macOS dev: `Ctrl+C` no terminal do `linux_start.sh` (ou `pkill -f "uvicorn server.dev"` se desanexado)
+- Linux dev: `Ctrl+C` no terminal do `linux_start.sh` (ou `pkill -f "uvicorn server.dev"` se desanexado)
+- macOS dev: `Ctrl+C` na janela do `macos_start.command` (ou rode `macos_stop.command`)
 - Windows dev: `windows_stop.bat`
 - Docker local: `docker compose down`
 
-Setup inicial (1ª vez no Linux/macOS):
+Setup inicial (1ª vez no Linux):
 
 ```bash
 python3 -m venv venv
@@ -79,7 +81,7 @@ python3 -m venv venv
 ./linux_start.sh
 ```
 
-O `windows_start.bat` faz o setup sozinho (baixa Python 3.12, cria venv, instala deps).
+O `windows_start.bat` e o `macos_start.command` fazem o setup sozinhos (baixam Python 3.12, criam a venv, instalam as deps; o de macOS também baixa o binário GOWA).
 
 ## Banco de dados
 
