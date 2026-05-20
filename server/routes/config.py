@@ -35,8 +35,8 @@ def register_routes(app, deps):
         return _ok({
             "openrouter_api_key": _mask_key(settings.get("openrouter_api_key", "")),
             "model": settings.get("model", "deepseek/deepseek-v4-pro"),
-            "audio_model": settings.get("audio_model", "google/gemini-3-flash-preview"),
-            "image_model": settings.get("image_model", "google/gemini-3-flash-preview"),
+            "audio_model": settings.get("audio_model", "google/gemini-2.5-flash"),
+            "image_model": settings.get("image_model", "google/gemini-2.5-flash"),
             "system_prompt": settings.get("system_prompt", ""),
             "auto_reply": settings.get("auto_reply", True),
             "max_context_messages": settings.get("max_context_messages", 10),
@@ -94,8 +94,8 @@ def register_routes(app, deps):
             api_key=settings.get("openrouter_api_key", ""),
             system_prompt=settings.get("system_prompt", ""),
             model=settings.get("model", "deepseek/deepseek-v4-pro"),
-            audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
-            image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
+            audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
+            image_model=settings.get("image_model", "google/gemini-2.5-flash"),
             max_context_messages=settings.get("max_context_messages", 10),
             split_messages=settings.get("split_messages", True),
             default_ai_enabled=settings.get("default_ai_enabled", True),
@@ -123,8 +123,8 @@ def register_routes(app, deps):
                 api_key=api_key,
                 system_prompt=settings.get("system_prompt", ""),
                 model=settings.get("model", "deepseek/deepseek-v4-pro"),
-                audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
-                image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
+                audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
+                image_model=settings.get("image_model", "google/gemini-2.5-flash"),
                 max_context_messages=settings.get("max_context_messages", 10),
             )
             logger.info("API key tested and auto-saved.")
@@ -136,9 +136,11 @@ def register_routes(app, deps):
         now = time.time()
         if _models_cache["data"] and now - _models_cache["fetched_at"] < _MODELS_CACHE_TTL:
             return _ok(_models_cache["data"])
+        api_key = settings.get("openrouter_api_key", "")
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(f"{LLM_API_BASE_URL}/models")
+                resp = await client.get(f"{LLM_API_BASE_URL}/models", headers=headers)
                 resp.raise_for_status()
                 raw = resp.json()
             models = []
@@ -155,7 +157,7 @@ def register_routes(app, deps):
             _models_cache["fetched_at"] = now
             return _ok(models)
         except Exception as e:
-            logger.error("Failed to fetch OpenRouter models: %s", e)
+            logger.error("Failed to fetch models from %s: %s", LLM_API_BASE_URL, e)
             if _models_cache["data"]:
                 return _ok(_models_cache["data"])
             return _err(f"Erro ao buscar modelos: {e}", status=502)

@@ -23,8 +23,6 @@ function Section({ title, children }) {
 export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
-  const [audioModel, setAudioModel] = useState('');
-  const [imageModel, setImageModel] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [autoReply, setAutoReply] = useState(true);
   const [maxContext, setMaxContext] = useState(10);
@@ -75,8 +73,6 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
     if (config) {
       setApiKey(''); // Don't show masked key in input
       setModel(config.model || '');
-      setAudioModel(config.audio_model || '');
-      setImageModel(config.image_model || '');
       setSystemPrompt(config.system_prompt || '');
       setAutoReply(config.auto_reply ?? true);
       setMaxContext(config.max_context_messages ?? 10);
@@ -145,8 +141,6 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   async function handleSave() {
     const data = {
       model: model.trim() || 'deepseek/deepseek-v4-pro',
-      audio_model: audioModel.trim() || 'google/gemini-3-flash-preview',
-      image_model: imageModel.trim() || 'google/gemini-3-flash-preview',
       system_prompt: systemPrompt,
       auto_reply: autoReply,
       max_context_messages: parseInt(maxContext, 10) || 10,
@@ -257,38 +251,31 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           />
         </div>
 
-        <!-- Audio & Image models -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label class="block text-sm font-semibold text-wa-text mb-1">Modelo transcrição áudio</label>
-            <${ModelSelect}
-              value=${audioModel}
-              onChange=${setAudioModel}
-              filterModality="audio"
-              placeholder="google/gemini-3-flash-preview"
-            />
-            <span class="text-xs text-wa-secondary">Modelo com suporte a áudio</span>
+        <!-- Image description toggle -->
+        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${imageTranscriptionEnabled ? 'bg-green-50 border-green-200 hover:bg-green-100' : 'bg-wa-panel border-wa-border hover:bg-wa-hover'}">
+          <input
+            type="checkbox"
+            checked=${imageTranscriptionEnabled}
+            onChange=${(e) => setImageTranscriptionEnabled(e.target.checked)}
+            class="w-4 h-4 rounded border-wa-border accent-wa-teal mt-0.5"
+          />
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class=${imageTranscriptionEnabled ? 'text-green-600' : 'text-wa-secondary'}>
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              <span class="text-sm font-semibold text-wa-text">Descrever imagem</span>
+              <span class="text-xs px-2 py-0.5 rounded-full ${imageTranscriptionEnabled ? 'bg-green-600 text-white' : 'bg-wa-secondary/20 text-wa-secondary'}">
+                ${imageTranscriptionEnabled ? 'Ativado' : 'Desativado'}
+              </span>
+            </div>
+            <span class="block text-xs text-wa-secondary mt-1">
+              Usa IA para descrever automaticamente o conteúdo de imagens recebidas pelo contato
+            </span>
           </div>
-          <div>
-            <label class="block text-sm font-semibold text-wa-text mb-1">Modelo descrição imagem</label>
-            <${ModelSelect}
-              value=${imageModel}
-              onChange=${setImageModel}
-              filterModality="image"
-              placeholder="google/gemini-3-flash-preview"
-            />
-            <span class="text-xs text-wa-secondary">Modelo com suporte a visão</span>
-            <label class="flex items-center gap-2 mt-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked=${imageTranscriptionEnabled}
-                onChange=${(e) => setImageTranscriptionEnabled(e.target.checked)}
-                class="accent-wa-teal w-4 h-4"
-              />
-              <span class="text-sm text-wa-text">Ativar transcrição de imagem</span>
-            </label>
-          </div>
-        </div>
+        </label>
 
         <!-- Audio transcription mode & target -->
         <div class="flex flex-col gap-3 p-3 bg-wa-panel rounded-lg border border-wa-border">

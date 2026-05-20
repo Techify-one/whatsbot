@@ -143,8 +143,8 @@ def register_routes(app, deps):
                 api_key=api_key,
                 system_prompt=settings.get("system_prompt", ""),
                 model=settings.get("model", "deepseek/deepseek-v4-pro"),
-                audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
-                image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
+                audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
+                image_model=settings.get("image_model", "google/gemini-2.5-flash"),
                 max_context_messages=settings.get("max_context_messages", 10),
             )
             logger.info("Setup: API key provisioned and saved.")

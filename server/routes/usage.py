@@ -14,12 +14,13 @@ from server.routes.config import get_models_cache
 logger = logging.getLogger(__name__)
 
 
-def _get_model_pricing(model_id: str) -> tuple[float, float]:
+def _get_model_pricing(model_id: str, api_key: str = "") -> tuple[float, float]:
     """Return (prompt_price_per_token, completion_price_per_token) from cache."""
     _models_cache = get_models_cache()
     if not _models_cache["data"]:
         try:
-            resp = httpx.get(f"{LLM_API_BASE_URL}/models", timeout=15)
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            resp = httpx.get(f"{LLM_API_BASE_URL}/models", headers=headers, timeout=15)
             resp.raise_for_status()
             raw = resp.json()
             models = []
@@ -61,9 +62,14 @@ def _parse_period(period: str | None, start: float | None, end: float | None) ->
 
 def register_routes(app, deps):
     agent_handler = deps.agent_handler
+    settings = deps.settings
 
-    # Wire up pricing function
-    agent_handler.pricing_fn = _get_model_pricing
+    # Wire up pricing function — closure captures settings to forward the API key
+    # to the upstream proxy (Techify / OpenRouter-compatible), which requires it.
+    def pricing_fn(model_id: str) -> tuple[float, float]:
+        return _get_model_pricing(model_id, settings.get("openrouter_api_key", ""))
+
+    agent_handler.pricing_fn = pricing_fn
 
     @app.get("/api/usage/summary")
     async def usage_summary_endpoint(period: str | None = None, start: float | None = None, end: float | None = None):

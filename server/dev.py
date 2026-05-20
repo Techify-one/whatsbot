@@ -55,8 +55,8 @@ app = create_app(
         max_context_messages=settings.get("max_context_messages", 10),
         inactivity_timeout_min=settings.get("inactivity_timeout_min", 30),
         model=settings.get("model", "deepseek/deepseek-v4-pro"),
-        audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
-        image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
+        audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
+        image_model=settings.get("image_model", "google/gemini-2.5-flash"),
         default_ai_enabled=settings.get("default_ai_enabled", True),
     ),
 )

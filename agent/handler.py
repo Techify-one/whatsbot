@@ -46,8 +46,8 @@ class AgentHandler:
         max_context_messages: int = 10,
         inactivity_timeout_min: int = 30,
         model: str = "deepseek/deepseek-v4-pro",
-        audio_model: str = "google/gemini-3-flash-preview",
-        image_model: str = "google/gemini-3-flash-preview",
+        audio_model: str = "google/gemini-2.5-flash",
+        image_model: str = "google/gemini-2.5-flash",
         pricing_fn=None,
         default_ai_enabled: bool = True,
     ):
