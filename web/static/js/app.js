@@ -11,17 +11,33 @@ import { PluginsManager } from './components/PluginsManager.js';
 import { PluginScreen } from './components/PluginScreen.js';
 import { ToolsManager } from './components/ToolsManager.js';
 import { SetupWizard } from './components/SetupWizard.js';
+import { LowBalanceModal } from './components/LowBalanceModal.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
 import { checkAuth, authHeaders } from './services/api.js';
 import { playTransferAlert } from './utils/alertSound.js';
+
+const LOW_BALANCE_SNOOZE_KEY = 'whatsbot_low_balance_snoozed_until';
+
+function lowBalanceIsSnoozed() {
+  try {
+    const v = parseInt(localStorage.getItem(LOW_BALANCE_SNOOZE_KEY) || '0', 10);
+    return v && Date.now() < v;
+  } catch { return false; }
+}
+
+function snoozeLowBalance(ms) {
+  try {
+    localStorage.setItem(LOW_BALANCE_SNOOZE_KEY, String(Date.now() + ms));
+  } catch {}
+}
 
 const html = htm.bind(h);
 
 // Core (built-in) routes. Plugin screens are merged in dynamically below.
 const CORE_ROUTES = {
   '/': 'contacts',
-  '/dashboard': 'dashboard',
+  '/painel': 'dashboard',
   '/sandbox': 'sandbox',
   '/costs': 'costs',
   '/executions': 'executions',
@@ -30,7 +46,7 @@ const CORE_ROUTES = {
 };
 const CORE_TAB_PATHS = {
   contacts: '/',
-  dashboard: '/dashboard',
+  dashboard: '/painel',
   sandbox: '/sandbox',
   costs: '/costs',
   executions: '/executions',
@@ -85,7 +101,7 @@ function MenuItem({ active, href, onClick, icon, children }) {
   `;
 }
 
-function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, onReopenSetup, accountUrl }) {
+function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, accountUrl }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -150,18 +166,9 @@ function GearMenu({ tab, onTabChange, pluginScreens, hasPassword, onLogout, onRe
               class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 no-underline text-wa-text"
             >
               <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/></svg>
-              Recarregar
+              Saldo e Recargar
             </a>
           ` : null}
-          <button
-            onClick=${() => { onReopenSetup(); close(); }}
-            class="w-full text-left px-4 py-2.5 text-[14px] hover:bg-wa-hover transition-colors flex items-center gap-2 text-wa-text"
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm-2 14l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
-            Refazer configuração
-          </button>
-
-          <div class="border-t border-wa-border my-1"></div>
           <${MenuItem} active=${tab === 'tools'} href=${CORE_TAB_PATHS.tools} onClick=${() => { onTabChange('tools'); close(); }}
             icon=${html`<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>`}
           >Gerenciar Tools</${MenuItem}>
@@ -217,6 +224,7 @@ function App({ onLogout, hasPassword }) {
   const [contactAiToggled, setContactAiToggled] = useState(null);
   const [messagesRead, setMessagesRead] = useState(null);
   const [messageStatus, setMessageStatus] = useState(null);
+  const [lowBalance, setLowBalance] = useState(null);
   const [initialContactId, setInitialContactId] = useState(contactIdFromPath);
   const [wizardManual, setWizardManual] = useState(() => window.location.pathname === '/wizard');
   const wizardLatchRef = useRef(false);
@@ -310,9 +318,35 @@ function App({ onLogout, hasPassword }) {
     onContactAiToggled: useCallback((data) => setContactAiToggled(data), []),
     onMessagesRead: useCallback((data) => setMessagesRead(data), []),
     onMessageStatus: useCallback((data) => setMessageStatus(data), []),
+    onLowBalance: useCallback((data) => {
+      if (lowBalanceIsSnoozed()) return;
+      setLowBalance(data);
+    }, []),
     onWsConnect: useCallback(() => setWsConnected(true), []),
     onWsDisconnect: useCallback(() => setWsConnected(false), []),
   });
+
+  // One-shot balance check on boot — covers the case where the app opens while
+  // already below the threshold but no LLM call has happened since the last
+  // broadcast. Skipped when the user has snoozed the popup.
+  useEffect(() => {
+    if (!config || !config.openrouter_api_key) return;
+    if (lowBalanceIsSnoozed()) return;
+    fetch('/api/balance', { headers: authHeaders() })
+      .then(r => r.json())
+      .then(res => {
+        if (res && res.ok && res.data && res.data.low_balance_enabled && res.data.below_threshold) {
+          setLowBalance({
+            remaining: res.data.remaining,
+            total_credits: res.data.total_credits,
+            total_usage: res.data.total_usage,
+            threshold: res.data.threshold,
+            account_url: res.data.account_url,
+          });
+        }
+      })
+      .catch(() => { /* ignore */ });
+  }, [config && config.openrouter_api_key]);
 
   async function handleSave(data) {
     const result = await save(data);
@@ -332,7 +366,7 @@ function App({ onLogout, hasPassword }) {
   }
 
   // First-run setup wizard — takes over the whole screen until completed.
-  // Also reopenable on demand via the gear menu ("Refazer configuração").
+  // Also reopenable on demand via the "Refazer configuração" button on /painel.
   // An install that already has an API key configured is NOT a first run —
   // never ambush an existing/configured user with the wizard after an update.
   const needsSetup = config
@@ -365,7 +399,7 @@ function App({ onLogout, hasPassword }) {
 
   return html`
     <div class="h-dvh overflow-hidden flex flex-col relative">
-      <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} onReopenSetup=${openWizard} accountUrl=${config && config.account_url} />
+      <${GearMenu} tab=${tab} onTabChange=${setTab} pluginScreens=${pluginScreens} hasPassword=${hasPassword} onLogout=${onLogout} accountUrl=${config && config.account_url} />
 
       <main class="flex-1 min-h-0 overflow-auto ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
         ${activePluginScreen
@@ -403,6 +437,7 @@ function App({ onLogout, hasPassword }) {
                     saving=${saving}
                     onSave=${handleSave}
                     onNotify=${handleNotify}
+                    onReopenSetup=${openWizard}
                   />
                 </div>`
               : tab === 'contacts'
@@ -427,6 +462,14 @@ function App({ onLogout, hasPassword }) {
                     : html`<${Sandbox} newMessage=${newMessage} />`
         }
       </main>
+
+      ${lowBalance ? html`<${LowBalanceModal}
+        balance=${lowBalance.remaining}
+        threshold=${lowBalance.threshold}
+        accountUrl=${lowBalance.account_url || (config && config.account_url)}
+        onClose=${() => setLowBalance(null)}
+        onSnooze=${(ms) => snoozeLowBalance(ms)}
+      />` : null}
     </div>
   `;
 }

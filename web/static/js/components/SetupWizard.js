@@ -225,7 +225,7 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
           <div class="text-5xl mb-2 text-wa-teal">✓</div>
           <h2 class="text-xl font-bold text-wa-text mb-1">Chave de API criada!</h2>
           <p class="text-sm text-wa-secondary mb-2">
-            Sua conta foi criada com <span class="text-wa-teal font-semibold">crédito grátis</span> para começar.
+            Sua conta foi criada com <span class="text-wa-teal font-semibold">1 dólar de crédito grátis</span> para começar.
           </p>
           <p class="text-sm text-wa-teal font-semibold bg-wa-teal/10 px-4 py-2 rounded-lg">
             Agente de IA ativado — já vai responder suas mensagens.
@@ -243,7 +243,7 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
           <p class="text-sm text-wa-secondary">
             ${keyState === 'requesting'
               ? 'Pedindo sua chave de API pelo WhatsApp.'
-              : 'Gerando sua chave de API e seu crédito grátis. Isso leva alguns segundos.'}
+              : 'Gerando sua chave de API e o crédito de 1 dólar. Isso leva alguns segundos.'}
           </p>
         </div>
       `;
@@ -252,11 +252,17 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
     return html`
       <div class="flex flex-col items-center text-center">
         <h2 class="text-xl font-bold text-wa-text mb-1">Criar conta e Ganhar Chave de API</h2>
-        <p class="text-sm text-wa-teal font-semibold bg-wa-teal/10 px-3 py-1 rounded-full mb-3">+ Crédito Grátis</p>
+        <p class="text-sm text-wa-teal font-semibold bg-wa-teal/10 px-3 py-1 rounded-full mb-3">+ 1 dólar de crédito grátis</p>
+        ${phone ? html`
+          <p class="text-xs text-wa-secondary mb-3">
+            Vinculada ao seu WhatsApp:
+            <span class="text-wa-text font-semibold">${formatPhone(phone)}</span>
+          </p>
+        ` : null}
         <p class="text-sm text-wa-secondary mb-4 leading-relaxed max-w-md">
-          A chave de API conecta o WhatsBot à inteligência artificial. Ao tocar no botão,
-          o WhatsBot envia uma mensagem pelo seu WhatsApp e cria sua conta automaticamente —
-          você não precisa fazer mais nada.
+          Ao tocar no botão, seu WhatsApp envia uma mensagem para o nosso agente de IA de controle,
+          que cria sua conta, configura a chave de API e libera 1 dólar de crédito automaticamente.
+          Você não precisa fazer mais nada.
         </p>
         ${keyState === 'error' && keyError ? html`
           <div class="w-full max-w-md mb-3 px-3 py-2 rounded-lg bg-red-50 border-2 border-red-200 text-red-600 text-sm font-medium">

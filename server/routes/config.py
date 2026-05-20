@@ -10,6 +10,7 @@ import httpx
 from config.settings import LLM_API_BASE_URL
 from server.auth import generate_salt, hash_password
 from server.helpers import _ok, _err, _mask_key
+from server import balance_monitor
 from plugins.events import emit as emit_event, emit_with_filter
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,8 @@ def register_routes(app, deps):
             "has_password": bool(settings.get("web_password_hash", "")),
             "setup_completed": settings.get("setup_completed", False),
             "account_url": settings.get("account_url", ""),
+            "low_balance_enabled": settings.get("low_balance_enabled", True),
+            "low_balance_threshold": settings.get("low_balance_threshold", 0.50),
         })
 
     @app.put("/api/config")
@@ -68,6 +71,7 @@ def register_routes(app, deps):
             "transfer_alert_enabled", "transfer_alert_duration",
             "group_reply_mode", "bot_phone", "bot_name",
             "max_executions", "default_ai_enabled", "setup_completed",
+            "low_balance_enabled", "low_balance_threshold",
         }
         keys_changed = []
         for key, value in body.items():
@@ -161,6 +165,36 @@ def register_routes(app, deps):
             if _models_cache["data"]:
                 return _ok(_models_cache["data"])
             return _err(f"Erro ao buscar modelos: {e}", status=502)
+
+    @app.get("/api/balance")
+    async def get_balance():
+        """Return current OpenRouter credit + threshold settings.
+
+        Used by the frontend on boot to seed the low-balance check before any
+        message goes through; the live updates come via the ``low_balance`` WS
+        event emitted by ``balance_monitor`` after LLM calls.
+        """
+        api_key = settings.get("openrouter_api_key", "")
+        if not api_key:
+            return _err("API key não configurada.", status=400)
+        balance = await balance_monitor.fetch_balance(api_key)
+        if balance is None:
+            cached = balance_monitor.get_cached()
+            if cached is None:
+                return _err("Não foi possível consultar o saldo.", status=502)
+            balance = {
+                "total_credits": cached.get("total_credits", 0.0),
+                "total_usage": cached.get("total_usage", 0.0),
+                "remaining": cached.get("remaining", 0.0),
+            }
+        threshold = float(settings.get("low_balance_threshold", 0.50) or 0.50)
+        return _ok({
+            **balance,
+            "threshold": threshold,
+            "low_balance_enabled": bool(settings.get("low_balance_enabled", True)),
+            "below_threshold": balance["remaining"] < threshold,
+            "account_url": settings.get("account_url", ""),
+        })
 
     @app.get("/api/status")
     async def get_status():

@@ -652,7 +652,7 @@ check("POST /sandbox/clear (all) -> 200", r.status_code == 200)
 # ═══════════════════════════════════════════════════════════════════
 section("Frontend SPA Routes")
 
-for path in ["/", "/dashboard", "/sandbox", "/costs"]:
+for path in ["/", "/painel", "/sandbox", "/costs"]:
     r = client.get(path)
     check(f"GET {path} -> 200", r.status_code == 200)
 

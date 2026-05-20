@@ -25,6 +25,7 @@ from plugins.events import (
     register_plugin_filters,
     emit as emit_event,
 )
+from server.balance_monitor import set_runtime as _set_balance_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ def create_app(
         _loop = asyncio.get_running_loop()
         _set_plugin_runtime(ws_manager, _loop)
         _set_events_runtime(_loop, agent_handler)
+        _set_balance_runtime(ws_manager, _loop, settings)
         # Lifecycle: plugins finished loading + bus is live, now broadcast
         for loaded in registry.loaded.values():
             emit_event("plugin.loaded", {
@@ -207,7 +209,7 @@ def create_app(
         if s.get("path", "").startswith("/")
     }
     _SPA_PATHS = (
-        {"/", "/dashboard", "/sandbox", "/costs", "/executions", "/plugins", "/tools", "/wizard"}
+        {"/", "/painel", "/sandbox", "/costs", "/executions", "/plugins", "/tools", "/wizard"}
         | _PLUGIN_SPA_PATHS
     )
 
@@ -266,7 +268,7 @@ def create_app(
     # ── Frontend routes ────────────────────────────────────────────────
 
     @app.get("/")
-    @app.get("/dashboard")
+    @app.get("/painel")
     @app.get("/sandbox")
     @app.get("/costs")
     @app.get("/executions")

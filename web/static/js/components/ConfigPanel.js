@@ -35,6 +35,8 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [imageTranscriptionEnabled, setImageTranscriptionEnabled] = useState(true);
   const [transferAlertEnabled, setTransferAlertEnabled] = useState(true);
   const [transferAlertDuration, setTransferAlertDuration] = useState(5);
+  const [lowBalanceEnabled, setLowBalanceEnabled] = useState(true);
+  const [lowBalanceThreshold, setLowBalanceThreshold] = useState(0.5);
   const [maxExecutions, setMaxExecutions] = useState(200);
   const [defaultAiEnabled, setDefaultAiEnabled] = useState(true);
   const [testing, setTesting] = useState(false);
@@ -85,6 +87,8 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       setImageTranscriptionEnabled(config.image_transcription_enabled ?? true);
       setTransferAlertEnabled(config.transfer_alert_enabled ?? true);
       setTransferAlertDuration(config.transfer_alert_duration ?? 5);
+      setLowBalanceEnabled(config.low_balance_enabled ?? true);
+      setLowBalanceThreshold(config.low_balance_threshold ?? 0.5);
       setMaxExecutions(config.max_executions ?? 200);
       setDefaultAiEnabled(config.default_ai_enabled ?? true);
     }
@@ -153,6 +157,8 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       image_transcription_enabled: imageTranscriptionEnabled,
       transfer_alert_enabled: transferAlertEnabled,
       transfer_alert_duration: parseInt(transferAlertDuration, 10) || 5,
+      low_balance_enabled: lowBalanceEnabled,
+      low_balance_threshold: isNaN(parseFloat(lowBalanceThreshold)) ? 0.5 : parseFloat(lowBalanceThreshold),
       max_executions: parseInt(maxExecutions, 10) || 200,
       default_ai_enabled: defaultAiEnabled,
     };
@@ -454,6 +460,35 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
                 onInput=${(e) => setTransferAlertDuration(e.target.value)}
                 class="w-32 bg-white text-wa-text px-3 py-1.5 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
               />
+            </div>
+          ` : null}
+        </div>
+
+        <!-- Low balance alert -->
+        <div class="flex flex-col gap-2 p-3 bg-wa-panel rounded-lg border border-wa-border">
+          <label class="flex items-center gap-2 text-sm font-semibold text-wa-text cursor-pointer">
+            <input
+              type="checkbox"
+              checked=${lowBalanceEnabled}
+              onChange=${(e) => setLowBalanceEnabled(e.target.checked)}
+              class="w-4 h-4 rounded border-wa-border accent-wa-teal"
+            />
+            Avisar quando o saldo estiver acabando
+          </label>
+          <span class="text-xs text-wa-secondary">Exibe um pop-up no painel com link de recarga quando o saldo cair abaixo do limite</span>
+          ${lowBalanceEnabled ? html`
+            <div class="mt-1">
+              <label class="block text-xs font-medium text-wa-text mb-1">Limite (USD)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value=${lowBalanceThreshold}
+                onInput=${(e) => setLowBalanceThreshold(e.target.value)}
+                class="w-32 bg-white text-wa-text px-3 py-1.5 rounded-lg text-sm border border-wa-border focus:border-wa-teal focus:outline-none"
+              />
+              <span class="text-xs text-wa-secondary block mt-1">Padrão: 0.50 (50 centavos de dólar)</span>
             </div>
           ` : null}
         </div>

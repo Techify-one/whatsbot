@@ -263,6 +263,13 @@ class AgentHandler:
                          phone, call_type, model, total_tokens, cost_usd)
         except Exception as e:
             logger.warning("Failed to record usage: %s", e)
+        # Trigger a low-balance check after every billable call. The monitor
+        # rate-limits actual fetches so this is cheap on a hot path.
+        try:
+            from server import balance_monitor
+            balance_monitor.trigger_check_async()
+        except Exception:
+            pass
 
     def _get_client(self) -> OpenAI:
         if self._client is None or self._client.api_key != self.api_key:

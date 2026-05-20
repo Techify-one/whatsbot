@@ -91,6 +91,11 @@ DEFAULT_CONFIG = {
     # the credential for that account (kept server-side only).
     "account_url": "",
     "access_token": "",
+    # Low-balance notification — broadcast a "low_balance" WS event when the
+    # remaining OpenRouter credit drops below the threshold (USD). The frontend
+    # opens a modal pointing to ``account_url`` for the user to recharge.
+    "low_balance_enabled": True,
+    "low_balance_threshold": 0.50,
 }
 
 
