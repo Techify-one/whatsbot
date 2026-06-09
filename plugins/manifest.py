@@ -136,6 +136,9 @@ def _build_manifest(data: dict, plugin_dir: Path) -> PluginManifest:
             "path": str(s["path"]),
             "icon": str(s.get("icon") or ""),
             "component": str(s["component"]),
+            # When true, the screen is the plugin's configuration UI: shown in the
+            # Plugins tab "Configurar" modal instead of as a standalone gear-menu page.
+            "config": bool(s.get("config", False)),
         })
 
     permissions = [str(p) for p in (data.get("permissions") or []) if isinstance(p, str)]

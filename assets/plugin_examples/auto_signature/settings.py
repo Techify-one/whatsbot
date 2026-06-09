@@ -11,17 +11,24 @@ class Settings(BaseModel):
     signature: str = Field(
         default="*Mensagem enviada por IA*",
         description=(
-            "Texto que será adicionado ao final de cada mensagem da IA. "
+            "Assinatura adicionada ao final das mensagens enviadas pela IA. "
             "Para deixar em negrito no WhatsApp, envolva com asteriscos "
             "(ex: `*Mensagem enviada por IA*`). Deixe em branco para "
-            "desativar a assinatura sem precisar desligar o plugin."
+            "desativar a assinatura da IA sem precisar desligar o plugin."
         ),
     )
     apply_to_operator: bool = Field(
         default=False,
         description=(
-            "Se ativado, a assinatura também é adicionada em mensagens "
-            "enviadas manualmente pelo painel (operador). Por padrão, "
-            "só mensagens da IA recebem a assinatura."
+            "Se ativado, mensagens enviadas manualmente pelo painel (operador) "
+            "também recebem assinatura — usando o texto do campo abaixo."
+        ),
+    )
+    operator_signature: str = Field(
+        default="",
+        description=(
+            "Assinatura para mensagens enviadas manualmente pelo painel (operador). "
+            "Usada apenas quando 'Apply To Operator' está ativado. "
+            "Se ficar em branco, usa a mesma assinatura da IA."
         ),
     )

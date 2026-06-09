@@ -10,11 +10,11 @@ Use `AskUserQuestion` para coletar (ou inferir do `$ARGUMENTS`):
 
 1. **id do plugin** (snake_case, ex: `orders`, `cardapio`, `agenda`). Validar regex `^[a-z][a-z0-9_]{0,31}$`.
 2. **Nome humano** e descrição curta.
-3. **Telas**: lista de objetos `{title, path, icon}`. Ex: `[{title: 'Pedidos', path: '/orders', icon: 'shopping-cart'}]`. Ao menos 1.
+3. **Telas**: lista de objetos `{title, path, icon, config}`. Ex: `[{title: 'Pedidos', path: '/orders', icon: 'shopping-cart', config: false}]`. Ao menos 1. Use `config: true` para a tela de **configuração** do plugin (abre no botão "Configurar" do card em `/plugins`); `config: false` (default) para telas de funcionalidade (viram página no menu da engrenagem).
 4. **Tools que o LLM vai expor**: lista `[{name, description, params: {field: type}}]`. Pode ser vazia se o plugin é só UI.
 5. **Precisa injetar conteúdo no system prompt?** (ex: cardápio). Se sim, descreva o que injetar.
 6. **Tabelas no banco**: lista de `{name, columns}` (sem o prefixo, vou adicionar). Pode ser vazia.
-7. **Settings declaráveis** (Pydantic Valves) — campos configuráveis pelo usuário na tela de settings. Pode ser vazio.
+7. **Settings declaráveis** (Pydantic Valves) — campos configuráveis pelo usuário. **Toda configuração do plugin vive na aba de configuração DO PRÓPRIO plugin** (botão "Configurar" em `/plugins`), NUNCA numa aba nova do painel de Configurações do core. Escolha: (a) `settings.py` com `class Settings(BaseModel)` → form auto-gerado; e/ou (b) uma screen `config: true` com UI custom. Pode ser vazio se o plugin não tem o que configurar.
 8. **Events que o plugin observa** (fire-and-forget, paralelo): lista de nomes a assinar — ex: `message.received`, `message.sent`, `llm.after`, `tool.after`, `*` (catch-all). Pode ser vazia. Veja a tabela completa em `CLAUDE.md` → Events.
 9. **Filters que o plugin intercepta** (síncronos, podem modificar ou abortar): lista de nomes a interceptar — ex: `filter.message.before_save`, `filter.reply.part`, `filter.system_prompt`, `filter.tool.args`. Retornar `None` aborta a ação. Pode ser vazia. Veja a tabela completa em `CLAUDE.md` → Filters.
 
@@ -78,9 +78,19 @@ screens:
     path: /<path>       # SPA path, escolher algo único
     icon: <icon-name>   # opcional, informativo
     component: /plugins/<id>/static/<id>.js
+    config: false       # true = tela de configuração do plugin (modal "Configurar"
+                        #        em /plugins). false (default) = página no menu da engrenagem.
 permissions: []
 dependencies: []
 ```
+
+**Onde fica a configuração (REGRA):** se o plugin tem opções configuráveis, elas
+vivem na aba de configuração DO PRÓPRIO plugin — `settings.py` (form auto-gerado)
+e/ou uma screen `config: true` (UI custom no mesmo modal "Configurar"). **Nunca**
+adicione opção de plugin ao painel de Configurações do core (`ConfigPanel.js`).
+Quando há uma screen `config: true`, o modal renderiza ela no lugar do form
+declarativo. Veja `assets/plugin_examples/notifications/` (screen `config: true`
+somente-UI que lê/grava `localStorage`) e `assets/plugin_examples/custom_sounds/`.
 
 ### tools.py (se houver tools)
 
@@ -307,6 +317,8 @@ CREATE INDEX IF NOT EXISTS plugin_<id>_items_created_at
 
 Componente Preact + HTM com `default export`. Usar imports do importmap (`preact`, `preact/hooks`, `htm`). Receber `apiBase` como prop.
 
+**Cores / modo escuro (obrigatório):** a tela tem que ser legível nos temas claro E escuro. Use as classes semânticas `wa-*` para superfícies/textos/bordas — `bg-wa-bg`, `bg-wa-panel` (cards), `text-wa-text`, `text-wa-secondary`, `border-wa-border`, `bg-wa-hover`, `bg-wa-teal` (botão), `text-white` (texto sobre botão colorido). Em `<input>`/`<textarea>`/`<select>` use a classe `.wa-field` (fundo cinza + texto preto). NÃO use cores cruas de fundo/texto (`bg-white`, `text-gray-*`, hex inline) confiando no padrão claro — no escuro vira texto claro sobre fundo claro = ilegível. Sempre ligue o modo escuro (engrenagem → "Modo escuro") e confira o contraste. Detalhes em CLAUDE.md → "Tema e modo escuro (legibilidade)".
+
 **Importante (auth):** quando o usuário configura uma senha no app, a API exige `Authorization: Bearer <token>` em **todas** as chamadas `/api/*`. O token fica em `localStorage` sob a chave `whatsbot_token`. Plugin precisa anexar esse header — senão a tela mostra `Não autenticado.` quando o app está protegido por senha. O helper abaixo cobre isso e também captura 401 pra disparar o evento de logout do core (`whatsbot:unauthorized`):
 
 ```js
@@ -357,8 +369,8 @@ Ao terminar, mostre:
 
 1. Caminho da pasta criada.
 2. Lista de arquivos gerados.
-3. Próximo passo: "Acesse `/plugins` no app. Clique em **Ativar** no card do plugin. O servidor reinicia em ~3s e a tela aparece no menu."
-4. Para customizar settings: na tela `/plugins`, clique em **Configurar**.
+3. Próximo passo: "Acesse `/plugins` no app. Clique em **Ativar** no card do plugin. O servidor reinicia em ~3s; telas de funcionalidade (`config: false`) aparecem no menu da engrenagem."
+4. Para configurar: na tela `/plugins`, clique em **Configurar** no card do plugin (abre o form de settings e/ou a screen `config: true`).
 5. Para compartilhar: na tela `/plugins`, **Exportar** baixa um `.zip`.
 
 ## Regras importantes
@@ -368,6 +380,7 @@ Ao terminar, mostre:
 - **Não invente nomes de imports** — use os do importmap (`preact`, `preact/hooks`, `htm`) e os módulos que o core já expõe (`db.engine`, `db.tables`, `db.repositories.*`, `agent.memory`, `plugins.context`). Para acesso ao banco em plugin: `from plugins.context import make_plugin_db` e `from sqlalchemy import text`.
 - **Tool name é global**: se conflitar com um nome existente o loader rejeita o plugin. Prefira nomes específicos como `<id>_<verbo>` (ex: `orders_create`, `cardapio_listar`).
 - **Settings UI é gerada automaticamente** a partir do schema Pydantic — strings, ints, floats, bools, enums. Não escreva form manual.
+- **Configuração SEMPRE na aba do próprio plugin** (settings declarativas e/ou screen `config: true` → modal "Configurar" em `/plugins`). **NUNCA** adicione seção/aba ao painel de Configurações do core (`web/static/js/components/ConfigPanel.js`) — isso é mexer no core e é proibido.
 - **Migrations rodam uma única vez** por versão. Para evoluir o schema, crie `002_*.sql`, `003_*.sql` — não edite `001`.
 
 ## Contrato de tools (importante)

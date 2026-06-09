@@ -23,7 +23,10 @@ function fieldType(prop) {
 
 function FieldInput({ name, prop, value, onChange }) {
   const t = fieldType(prop);
-  const baseCls = "w-full border border-wa-border rounded px-3 py-2 text-[14px] focus:outline-none focus:border-wa-teal";
+  // Inputs use a fixed gray background with black text so they stay readable in
+  // both light and dark themes (otherwise the text inherits the light theme
+  // color over a white field and becomes invisible in dark mode).
+  const baseCls = "w-full wa-field border border-wa-border rounded px-3 py-2 text-[14px] focus:outline-none focus:border-wa-teal";
 
   if (t === 'enum') {
     return html`

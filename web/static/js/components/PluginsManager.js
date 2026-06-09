@@ -6,6 +6,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { PluginSettingsForm } from './PluginSettingsForm.js';
+import { PluginScreen } from './PluginScreen.js';
 import { authHeaders, handleUnauthorized } from '../services/api.js';
 
 const html = htm.bind(h);
@@ -24,14 +25,14 @@ function StatusBadge({ plugin }) {
   if (plugin.enabled && !plugin.loaded) {
     return html`<span class="px-2 py-0.5 rounded-full text-[11px] bg-yellow-100 text-yellow-800">Ativado (aguardando restart)</span>`;
   }
-  return html`<span class="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-600">Desativado</span>`;
+  return html`<span class="px-2 py-0.5 rounded-full text-[11px] bg-wa-panel text-wa-secondary">Desativado</span>`;
 }
 
 
 function RestartBanner() {
   return html`
     <div class="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center">
-      <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm">
+      <div class="bg-wa-bg rounded-lg shadow-xl p-6 max-w-sm">
         <div class="flex items-center gap-3">
           <div class="w-6 h-6 border-2 border-wa-teal border-t-transparent rounded-full animate-spin"></div>
           <div>
@@ -164,6 +165,11 @@ export function PluginsManager({ onPluginsChanged }) {
   if (loading) return html`<div class="text-wa-secondary">Carregando plugins…</div>`;
   if (error) return html`<div class="text-red-600">Erro: ${error}</div>`;
 
+  // A plugin may ship a custom config UI as a screen flagged `config: true`
+  // (rendered in the modal below instead of the auto-generated settings form).
+  const cfgPlugin = settingsOpen ? plugins.find(p => p.id === settingsOpen) : null;
+  const cfgScreen = cfgPlugin ? (cfgPlugin.screens || []).find(s => s.config) : null;
+
   return html`
     <div>
       ${restarting ? html`<${RestartBanner} />` : null}
@@ -195,7 +201,7 @@ export function PluginsManager({ onPluginsChanged }) {
         : html`
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             ${plugins.map(p => html`
-              <div key=${p.id} class="bg-white border border-wa-border rounded-lg p-4">
+              <div key=${p.id} class="bg-wa-bg border border-wa-border rounded-lg p-4">
                 <div class="flex items-start justify-between gap-2">
                   <div>
                     <div class="font-medium text-[15px]">${p.name || p.id}</div>
@@ -239,20 +245,20 @@ export function PluginsManager({ onPluginsChanged }) {
       }
 
       ${settingsOpen ? html`
-        <div class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
-             onClick=${() => setSettingsOpen(null)}>
-          <div class="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto"
-               onClick=${e => e.stopPropagation()}>
+        <div class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+          <div class="bg-wa-bg rounded-lg shadow-xl ${cfgScreen ? 'max-w-2xl' : 'max-w-lg'} w-full mx-4 max-h-[85vh] overflow-y-auto">
             <div class="border-b border-wa-border px-4 py-3 flex items-center justify-between">
-              <div class="font-medium">Configurações — ${settingsOpen}</div>
+              <div class="font-medium">Configurações — ${(cfgPlugin && cfgPlugin.name) || settingsOpen}</div>
               <button class="text-wa-secondary hover:text-wa-text"
                       onClick=${() => setSettingsOpen(null)}>×</button>
             </div>
             <div class="p-4">
-              <${PluginSettingsForm}
-                pluginId=${settingsOpen}
-                onSaved=${() => onPluginsChanged && onPluginsChanged()}
-              />
+              ${cfgScreen
+                ? html`<${PluginScreen} screen=${{ ...cfgScreen, pluginId: cfgPlugin.id }} />`
+                : html`<${PluginSettingsForm}
+                    pluginId=${settingsOpen}
+                    onSaved=${() => onPluginsChanged && onPluginsChanged()}
+                  />`}
             </div>
           </div>
         </div>

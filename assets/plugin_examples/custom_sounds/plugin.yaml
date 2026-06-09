@@ -1,0 +1,19 @@
+id: custom_sounds
+name: Sons de Notificação
+version: 1.0.0
+whatsbot_api_version: ">=1.0,<2.0"
+description: Envie seus próprios sons (.mp3/.ogg/.wav) e escolha qual será tocado nas notificações do painel. Integra-se ao sistema de notificações nativo (o som só toca se a notificação sonora estiver ligada em Configurações).
+author: WhatsBot
+entry:
+  routes: routes
+migrations: migrations
+screens:
+  - id: custom-sounds-home
+    title: Sons de Notificação
+    path: /custom-sounds
+    icon: bell
+    component: /plugins/custom_sounds/static/custom_sounds.js
+    config: true
+permissions:
+  - db.write
+dependencies: []

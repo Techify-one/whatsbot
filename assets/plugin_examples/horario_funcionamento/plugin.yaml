@@ -1,0 +1,21 @@
+id: horario_funcionamento
+name: Horário de Funcionamento
+version: 1.0.0
+whatsbot_api_version: ">=1.0,<2.0"
+description: >-
+  Define um horário de funcionamento por dia da semana. Fora do horário, a IA
+  para de responder normalmente e envia uma mensagem de ausência (away)
+  configurável — uma vez por contato dentro de um intervalo (cooldown), pra não
+  repetir. Exemplo de uso combinado de filters interceptive (filter.system_prompt
+  + filter.llm.tools + filter.llm.messages) sem tocar no core.
+author: WhatsBot
+entry:
+  filters: filters
+  settings: settings
+migrations: migrations
+filters:
+  - filter.system_prompt
+  - filter.llm.tools
+  - filter.llm.messages
+permissions: []
+dependencies: []
