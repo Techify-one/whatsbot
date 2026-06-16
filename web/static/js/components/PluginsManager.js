@@ -179,7 +179,13 @@ export function PluginsManager({ onPluginsChanged }) {
           API do core: ${apiVersion}
           · ${plugins.length} plugin${plugins.length === 1 ? '' : 's'}
         </div>
-        <div>
+        <div class="flex items-center gap-2">
+          <a
+            href="https://whatsbot.techify.one/plugins"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="px-3 py-1.5 bg-red-600 text-white rounded text-[14px] hover:bg-red-700"
+          >Loja de Plugins</a>
           <input type="file" ref=${fileRef} accept=".zip" class="hidden"
             onChange=${e => importPlugin(e.target.files && e.target.files[0])} />
           <button
