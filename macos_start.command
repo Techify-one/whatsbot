@@ -16,7 +16,7 @@ set -u
 WEB_PORT="${WHATSBOT_WEB_PORT:-8080}"
 
 # Versão do GOWA que casa com o cliente em gowa/client.py e o Dockerfile.
-GOWA_VERSION="${GOWA_VERSION:-8.5.0}"
+GOWA_VERSION="${GOWA_VERSION:-8.8.0}"
 # Versão do Python instalada automaticamente quando nenhuma 3.11+ é encontrada.
 PY_VERSION="${PY_VERSION:-3.12.8}"
 

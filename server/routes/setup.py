@@ -13,13 +13,26 @@ also carries ``account_url`` (the customer's account/recharge page) and
 ``access_token`` (credential for that account), both persisted to config.
 Techify keeps the key downloadable for ~1 minute after the account is
 created.
+
+Manual fallback: WhatsApp's reach-out timelock (error 463) can block the bot
+from sending the provisioning message to a brand-new contact — it hits
+newly-linked / low-activity numbers hardest, which is exactly this wizard's
+scenario. When that happens we still arm the key polling and return the data
+the frontend needs to ask the user to send the very same message *by hand*
+from their own phone (a ``wa.me`` deep link + a scannable QR pointing to it).
+A human-initiated first message is the documented way past the timelock, and
+because it goes out from the same WhatsApp number, the key polling resolves
+exactly as in the automatic path — the key still lands in the config on its
+own, no copy-paste required.
 """
 
 import asyncio
 import logging
 import time
+from urllib.parse import quote
 
 import httpx
+import segno
 
 from config.settings import (
     TECHIFY_PROVISION_MESSAGE,
@@ -31,6 +44,21 @@ from gowa.client import GOWASendError
 from server.helpers import _ok, _err
 
 logger = logging.getLogger(__name__)
+
+
+def _wa_deep_link(number: str, message: str) -> str:
+    """Build a wa.me click-to-chat link that pre-fills ``message`` to ``number``."""
+    digits = "".join(ch for ch in str(number) if ch.isdigit())
+    return f"https://wa.me/{digits}?text={quote(message)}"
+
+
+def _qr_data_uri(url: str) -> str:
+    """Render ``url`` as a PNG data URI QR code (scanning it opens WhatsApp)."""
+    try:
+        return segno.make(url, error="m").png_data_uri(scale=5, border=2)
+    except Exception as e:  # never let QR rendering break provisioning
+        logger.warning("Setup: failed to render provisioning QR: %s", e)
+        return ""
 
 
 async def _fetch_provision_number() -> str:
@@ -90,18 +118,42 @@ def register_routes(app, deps):
                 provision_number, e,
             )
 
+        def _arm_polling():
+            state.setup_key_number = number
+            state.setup_key_requested_at = time.time()
+
         try:
             await asyncio.to_thread(
                 gowa_client.send_message, provision_number, TECHIFY_PROVISION_MESSAGE
             )
         except GOWASendError as e:
             logger.error("Setup: failed to send provisioning message: %s", e)
+            if getattr(e, "error_type", "") == "reachout_timelock":
+                # WhatsApp's anti-spam restriction on first messages to new
+                # contacts (error 463): the bot can't open the chat, but the
+                # *user* can, by hand, from the phone linked to this session.
+                # Arm the key polling anyway and hand the frontend everything it
+                # needs to guide that manual send — once it goes out, the key
+                # lands in the config automatically, same as the auto path.
+                _arm_polling()
+                wa_link = _wa_deep_link(provision_number, TECHIFY_PROVISION_MESSAGE)
+                logger.info(
+                    "Setup: reach-out timelock; falling back to manual send, "
+                    "polling key for %s", number,
+                )
+                return _ok({
+                    "status": "manual",
+                    "number": number,
+                    "provision_number": provision_number,
+                    "provision_message": TECHIFY_PROVISION_MESSAGE,
+                    "wa_link": wa_link,
+                    "qr_data_uri": _qr_data_uri(wa_link),
+                })
             return _err(f"Não foi possível enviar a mensagem: {e}")
 
-        state.setup_key_number = number
-        state.setup_key_requested_at = time.time()
+        _arm_polling()
         logger.info("Setup: provisioning message sent, polling key for %s", number)
-        return _ok({"number": number})
+        return _ok({"status": "sent", "number": number})
 
     @app.get("/api/setup/key-status")
     async def key_status():

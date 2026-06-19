@@ -8,6 +8,9 @@ const html = htm.bind(h);
 
 const STEPS = ['Conectar', 'Chave de API', 'Agente de IA', 'Testar'];
 const MAX_POLL_ATTEMPTS = 75; // ~2.5 min at 2s interval — beyond the Techify TTL
+// Manual fallback: the user has to open WhatsApp and send by hand, so give them
+// a much longer window before timing out (~10 min at 2s interval).
+const MAX_MANUAL_POLL_ATTEMPTS = 300;
 
 // Example agent prompt shown on step 3 — a simple snack bar, 4 instruction
 // blocks, kept short so the user can read it at a glance.
@@ -92,14 +95,19 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
   }, [step, status.connected]);
 
   // ── Step 2: API key provisioning ─────────────────────────────────
-  // keyState: 'idle' | 'requesting' | 'polling' | 'ready' | 'error'
+  // keyState: 'idle' | 'requesting' | 'polling' | 'manual' | 'ready' | 'error'
   const [keyState, setKeyState] = useState('idle');
   const [keyError, setKeyError] = useState('');
+  // Manual-fallback payload (set when WhatsApp blocks the bot's send with the
+  // reach-out timelock): { provision_number, provision_message, wa_link, qr_data_uri }.
+  const [manualData, setManualData] = useState(null);
+  const [msgCopied, setMsgCopied] = useState(false);
   const pollAttemptsRef = useRef(0);
   const hasKey = !!(config && config.openrouter_api_key && config.openrouter_api_key.length > 0);
 
   async function startProvisioning() {
     setKeyError('');
+    setManualData(null);
     setKeyState('requesting');
     let res;
     try { res = await setupRequestKey(); } catch (e) { res = null; }
@@ -109,12 +117,32 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
       return;
     }
     pollAttemptsRef.current = 0;
+    // The bot couldn't send (WhatsApp reach-out timelock): switch to the manual
+    // flow. Polling is already armed server-side, so the key still arrives on
+    // its own once the user sends the message from their phone.
+    if (res.data && res.data.status === 'manual') {
+      setManualData(res.data);
+      setKeyState('manual');
+      return;
+    }
     setKeyState('polling');
   }
 
-  // Poll the backend every 2s while in 'polling' state.
+  function copyProvisionMessage() {
+    const txt = manualData && manualData.provision_message;
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(() => {
+      setMsgCopied(true);
+      setTimeout(() => setMsgCopied(false), 2000);
+    });
+  }
+
+  // Poll the backend every 2s while waiting for the key — both for the
+  // automatic ('polling') and the manual ('manual') flows.
   useEffect(() => {
-    if (keyState !== 'polling') return;
+    if (keyState !== 'polling' && keyState !== 'manual') return;
+    const manual = keyState === 'manual';
+    const cap = manual ? MAX_MANUAL_POLL_ATTEMPTS : MAX_POLL_ATTEMPTS;
     let stopped = false;
     const tick = async () => {
       pollAttemptsRef.current += 1;
@@ -124,15 +152,21 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
       const st = res && res.ok && res.data ? res.data.status : 'error';
       if (st === 'ready') {
         setKeyState('ready');
-      } else if (st === 'expired') {
+      } else if (st === 'expired' && !manual) {
         setKeyError('A solicitação expirou. Toque para tentar de novo.');
         setKeyState('error');
-      } else if (st === 'error') {
+      } else if (st === 'error' && !manual) {
         setKeyError('Não conseguimos receber a chave. Toque para tentar de novo.');
         setKeyState('error');
-      } else if (pollAttemptsRef.current >= MAX_POLL_ATTEMPTS) {
-        setKeyError('A chave não chegou a tempo. Toque para tentar de novo.');
-        setKeyState('error');
+      } else if (pollAttemptsRef.current >= cap) {
+        // In manual mode the user may simply not have sent yet — keep the
+        // instructions on screen instead of bouncing them to a hard error.
+        if (manual) {
+          setKeyError('Ainda não recebemos sua mensagem. Envie pelo WhatsApp e aguarde, ou pule por agora.');
+        } else {
+          setKeyError('A chave não chegou a tempo. Toque para tentar de novo.');
+          setKeyState('error');
+        }
       }
     };
     const timer = setInterval(tick, 2000);
@@ -245,6 +279,75 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
               ? 'Pedindo sua chave de API pelo WhatsApp.'
               : 'Gerando sua chave de API e o crédito de 1 dólar. Isso leva alguns segundos.'}
           </p>
+        </div>
+      `;
+    }
+    if (keyState === 'manual') {
+      const m = manualData || {};
+      return html`
+        <div class="flex flex-col items-center text-center">
+          <h2 class="text-xl font-bold text-wa-text mb-1">Falta só um passo</h2>
+          <p class="text-sm text-wa-secondary mb-3 max-w-md leading-relaxed">
+            O WhatsApp bloqueou o envio automático para um contato novo (proteção
+            anti-spam). É só você mesmo enviar a mensagem abaixo pelo seu WhatsApp —
+            assim que enviar, sua chave de API é criada e configurada sozinha.
+          </p>
+
+          <div class="w-full max-w-md grid sm:grid-cols-2 gap-4 items-start text-left">
+            <div class="flex flex-col gap-3">
+              <div class="rounded-xl border-2 border-wa-border bg-wa-panel p-3">
+                <div class="text-xs text-wa-secondary mb-0.5">Enviar para</div>
+                <div class="text-sm font-semibold text-wa-text">
+                  ${m.provision_number ? formatPhone(m.provision_number) : '...'}
+                </div>
+              </div>
+              <div class="rounded-xl border-2 border-wa-border bg-wa-panel p-3">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="text-xs text-wa-secondary">Mensagem (exatamente assim)</div>
+                  <button
+                    type="button"
+                    onClick=${copyProvisionMessage}
+                    class="text-xs font-semibold ${msgCopied ? 'text-green-600' : 'text-wa-teal hover:text-wa-tealDark'} transition-colors"
+                  >
+                    ${msgCopied ? '✓ Copiada' : 'Copiar'}
+                  </button>
+                </div>
+                <div class="text-sm text-wa-text bg-wa-bg rounded-lg px-3 py-2 border border-wa-border">
+                  ${m.provision_message || ''}
+                </div>
+              </div>
+              ${m.wa_link ? html`
+                <a
+                  href=${m.wa_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="w-full text-center py-3 rounded-xl text-sm font-bold text-white bg-wa-teal hover:bg-wa-tealDark shadow-md shadow-wa-teal/30 transition-colors"
+                >
+                  Abrir no WhatsApp e enviar
+                </a>
+              ` : null}
+            </div>
+
+            <div class="flex flex-col items-center gap-2">
+              ${m.qr_data_uri ? html`
+                <div class="bg-white p-2 rounded-xl border-2 border-wa-border">
+                  <img src=${m.qr_data_uri} alt="QR Code para enviar a mensagem" class="w-40 h-40 object-contain" />
+                </div>
+                <p class="text-xs text-wa-secondary leading-snug text-center">
+                  Ou aponte a câmera do celular para este código — ele abre o
+                  WhatsApp com a mensagem pronta.
+                </p>
+              ` : null}
+            </div>
+          </div>
+
+          <div class="mt-4 flex items-center gap-2 text-sm text-wa-teal font-medium">
+            <span class="animate-pulse-slow">⏳</span>
+            <span>Aguardando sua mensagem e a chave de API chegar...</span>
+          </div>
+          ${keyError ? html`
+            <div class="mt-2 text-xs text-wa-secondary max-w-md">${keyError}</div>
+          ` : null}
         </div>
       `;
     }
@@ -380,6 +483,14 @@ export function SetupWizard({ status, qrAvailable, qrVersion, config, onComplete
           <div class="flex items-center gap-2">
             <button onClick=${() => setStep(3)} class=${btnGhost}>Pular por agora</button>
             <button onClick=${startProvisioning} class=${btnPrimary}>Tentar novamente</button>
+          </div>
+        `;
+      }
+      if (keyState === 'manual') {
+        return html`
+          <div class="flex items-center gap-2">
+            <button onClick=${() => setStep(3)} class=${btnGhost}>Pular por agora</button>
+            <button onClick=${startProvisioning} class=${btnGhost}>Tentar pelo bot de novo</button>
           </div>
         `;
       }
