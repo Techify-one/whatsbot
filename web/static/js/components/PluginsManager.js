@@ -54,6 +54,7 @@ export function PluginsManager({ onPluginsChanged }) {
   const [settingsOpen, setSettingsOpen] = useState(null); // plugin id
   const [importing, setImporting] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [exporting, setExporting] = useState({}); // { [pluginId]: pct (0-100) }
   const fileRef = useRef(null);
 
   async function load() {
@@ -120,12 +121,39 @@ export function PluginsManager({ onPluginsChanged }) {
     }
   }
 
+  function clearExporting(pid) {
+    setExporting(s => { const n = { ...s }; delete n[pid]; return n; });
+  }
+
   async function exportPlugin(pid) {
+    if (exporting[pid] != null) return; // already running
+    setExporting(s => ({ ...s, [pid]: 0 }));
     try {
       const r = await fetch(`/api/plugins/${pid}/export`, { headers: authHeaders() });
       if (r.status === 401) { handleUnauthorized(); throw new Error('Não autenticado.'); }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const blob = await r.blob();
+
+      // Stream the body so we can report real download progress. Falls back to
+      // a plain blob if the browser can't expose the stream or size.
+      const total = Number(r.headers.get('content-length')) || 0;
+      let blob;
+      if (r.body && total > 0) {
+        const reader = r.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          setExporting(s => ({ ...s, [pid]: Math.min(99, Math.round((received / total) * 100)) }));
+        }
+        blob = new Blob(chunks, { type: 'application/zip' });
+      } else {
+        blob = await r.blob();
+      }
+      setExporting(s => ({ ...s, [pid]: 100 }));
+
       const cd = r.headers.get('content-disposition') || '';
       const m = cd.match(/filename="?([^";]+)"?/i);
       const filename = (m && m[1]) || `${pid}.zip`;
@@ -137,7 +165,11 @@ export function PluginsManager({ onPluginsChanged }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+
+      // Hold the full bar briefly so it's visible even for tiny plugins.
+      setTimeout(() => clearExporting(pid), 800);
     } catch (e) {
+      clearExporting(pid);
       alert(`Erro ao exportar: ${e.message || e}`);
     }
   }
@@ -238,13 +270,26 @@ export function PluginsManager({ onPluginsChanged }) {
                   >Configurar</button>
                   <button
                     onClick=${() => exportPlugin(p.id)}
-                    class="px-3 py-1 text-[13px] rounded bg-wa-panel border border-wa-border"
-                  >Exportar</button>
+                    disabled=${exporting[p.id] != null}
+                    class="px-3 py-1 text-[13px] rounded bg-wa-panel border border-wa-border disabled:opacity-50"
+                  >${exporting[p.id] != null ? 'Exportando…' : 'Exportar'}</button>
                   <button
                     onClick=${() => deletePlugin(p.id)}
                     class="px-3 py-1 text-[13px] rounded bg-red-50 text-red-700 border border-red-200"
                   >Deletar</button>
                 </div>
+                ${exporting[p.id] != null ? html`
+                  <div class="mt-3">
+                    <div class="flex items-center justify-between text-[11px] text-wa-secondary mb-1">
+                      <span>Exportando…</span>
+                      <span>${exporting[p.id]}%</span>
+                    </div>
+                    <div class="h-2 bg-wa-panel border border-wa-border rounded-full overflow-hidden">
+                      <div class="h-full bg-wa-teal transition-all duration-150"
+                           style=${`width:${exporting[p.id]}%`}></div>
+                    </div>
+                  </div>
+                ` : null}
               </div>
             `)}
           </div>`

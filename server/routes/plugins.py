@@ -187,12 +187,16 @@ def register_routes(app, deps):
                     continue
                 arc = path.relative_to(target).as_posix()
                 zf.write(path, arc)
+        size = buf.getbuffer().nbytes
         buf.seek(0)
         filename = f"{plugin_id}-plugin.zip"
         return StreamingResponse(
             buf,
             media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                "Content-Length": str(size),
+            },
         )
 
     @app.post("/api/plugins/import")
