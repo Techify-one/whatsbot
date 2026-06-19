@@ -66,6 +66,10 @@ def main():
         audio_model=settings.get("audio_model", "google/gemini-3-flash-preview"),
         image_model=settings.get("image_model", "google/gemini-3-flash-preview"),
         default_ai_enabled=settings.get("default_ai_enabled", True),
+        multi_agent_enabled=settings.get("multi_agent_enabled", False),
+        agent_team_mode=settings.get("agent_team_mode", "coordinate"),
+        agents=settings.get("agents", []),
+        ai_engine_enabled=settings.get("ai_engine_enabled", False),
     )
 
     app = create_app(

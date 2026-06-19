@@ -54,6 +54,7 @@ def register_routes(app, deps):
             "transfer_alert_duration": settings.get("transfer_alert_duration", 5),
             "max_executions": settings.get("max_executions", 200),
             "default_ai_enabled": settings.get("default_ai_enabled", True),
+            "ai_engine_enabled": settings.get("ai_engine_enabled", False),
             "has_password": bool(settings.get("web_password_hash", "")),
             "setup_completed": settings.get("setup_completed", False),
             "account_url": settings.get("account_url", ""),
@@ -74,6 +75,7 @@ def register_routes(app, deps):
             "group_reply_mode", "bot_phone",
             "max_executions", "default_ai_enabled", "setup_completed",
             "low_balance_enabled", "low_balance_threshold",
+            "ai_engine_enabled",
         }
         keys_changed = []
         for key, value in body.items():
@@ -110,6 +112,10 @@ def register_routes(app, deps):
             max_context_messages=settings.get("max_context_messages", 10),
             split_messages=settings.get("split_messages", True),
             default_ai_enabled=settings.get("default_ai_enabled", True),
+            multi_agent_enabled=settings.get("multi_agent_enabled", False),
+            agent_team_mode=settings.get("agent_team_mode", "coordinate"),
+            agents=settings.get("agents", []),
+            ai_engine_enabled=settings.get("ai_engine_enabled", False),
         )
 
         await ws_manager.broadcast("config_saved", {})

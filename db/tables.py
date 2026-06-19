@@ -151,6 +151,12 @@ executions = Table(
     Column("started_at", Float, nullable=False),
     Column("completed_at", Float),
     Column("error", Text),
+    # Which DB-driven agent handled this execution + aggregate cost/usage.
+    # Populated only when the AI engine (ai_engine_enabled) is active; null/0
+    # otherwise so the legacy path is unaffected.
+    Column("agent_key", Text),
+    Column("total_tokens", Integer, nullable=False, server_default="0"),
+    Column("total_cost_usd", Float, nullable=False, server_default="0.0"),
 )
 Index("idx_exec_started", executions.c.started_at)
 
@@ -200,6 +206,113 @@ tool_overrides = Table(
     Column("updated_at", Float, nullable=False),
 )
 Index("idx_tool_overrides_plugin", tool_overrides.c.plugin_id)
+
+
+# --------------------------------------------------------------------------- #
+# AI engine — config-in-DB + code-in-DB (prefix ``ai_``)
+# --------------------------------------------------------------------------- #
+# These tables move the agent's prompt/model/tools out of code and into the DB,
+# so behaviour can change without a deploy. All JSON-shaped values are stored as
+# JSON-encoded TEXT (portable across SQLite/Postgres), mirroring ``config``.
+
+ai_agents = Table(
+    "ai_agents",
+    metadata,
+    # ``agent_key`` is identity — never rename (breaks executions.agent_key).
+    Column("agent_key", Text, primary_key=True),
+    Column("display_name", Text, nullable=False, server_default=""),
+    Column("prompt_key", Text, nullable=False, server_default=""),
+    # JSON object: {model, temperature, top_p, max_tokens, ...}
+    Column("model_config", Text, nullable=False, server_default="{}"),
+    # JSON array of tool names, or null/"all" meaning every registered tool.
+    Column("tool_names", Text),
+    Column("enabled", Integer, nullable=False, server_default="1"),
+    Column("version", Integer, nullable=False, server_default="1"),
+    Column("updated_at", Float, nullable=False),
+)
+
+
+ai_prompts = Table(
+    "ai_prompts",
+    metadata,
+    # ``prompt_key`` is identity — referenced by ai_agents.prompt_key.
+    Column("prompt_key", Text, primary_key=True),
+    # Template body with ``{placeholder}`` slots resolved from ai_variables.
+    Column("body", Text, nullable=False, server_default=""),
+    Column("version", Integer, nullable=False, server_default="1"),
+    Column("updated_at", Float, nullable=False),
+)
+
+
+ai_variables = Table(
+    "ai_variables",
+    metadata,
+    # Global values referenceable by prompts via ``{name}``.
+    Column("name", Text, primary_key=True),
+    Column("value", Text, nullable=False, server_default=""),
+    Column("category", Text, nullable=False, server_default=""),
+    Column("updated_at", Float, nullable=False),
+)
+
+
+ai_tools = Table(
+    "ai_tools",
+    metadata,
+    # ``name`` is identity (== schema function name; == usage.call_type).
+    Column("name", Text, primary_key=True),
+    Column("description", Text, nullable=False, server_default=""),
+    # Python source materialised to storages/ai_tools/<name>.py and imported.
+    Column("code", Text, nullable=False, server_default=""),
+    # JSON array of pip specs (e.g. ["httpx>=0.27,<0.28"]).
+    Column("dependencies", Text, nullable=False, server_default="[]"),
+    Column("enabled", Integer, nullable=False, server_default="1"),
+    # pending | installing | ok | failed — gates registration (fail-closed).
+    Column("install_status", Text, nullable=False, server_default="pending"),
+    Column("install_error", Text),
+    # JSON array — the dependency specs last successfully installed (cache
+    # marker: pip is skipped on boot when this equals ``dependencies``).
+    Column("installed_deps", Text, nullable=False, server_default="[]"),
+    Column("version", Integer, nullable=False, server_default="1"),
+    Column("updated_at", Float, nullable=False),
+)
+
+
+# History tables — one snapshot row per save (rollback + change trail). The
+# ``snapshot`` column holds the full JSON-encoded row as it was after the save.
+ai_agents_history = Table(
+    "ai_agents_history",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("agent_key", Text, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("snapshot", Text, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
+Index("idx_ai_agents_hist", ai_agents_history.c.agent_key, ai_agents_history.c.version)
+
+
+ai_prompts_history = Table(
+    "ai_prompts_history",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("prompt_key", Text, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("snapshot", Text, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
+Index("idx_ai_prompts_hist", ai_prompts_history.c.prompt_key, ai_prompts_history.c.version)
+
+
+ai_tools_history = Table(
+    "ai_tools_history",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", Text, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("snapshot", Text, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
+Index("idx_ai_tools_hist", ai_tools_history.c.name, ai_tools_history.c.version)
 
 
 # Set of core table names — used by the SQLite → Postgres migration helper to

@@ -15,9 +15,10 @@ from server.auth import auth_required, verify_token
 from server.helpers import _get_web_dir
 from server.state import MemoryLogHandler, ConnectionManager, AppState
 from server.background import start_gowa_task, status_poll_loop, qr_poll_loop, avatar_fetch_task
-from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, setup as setup_routes, plugins as plugins_routes, tools as tools_routes, admin as admin_routes
+from server.routes import logs, sandbox, config, whatsapp, websocket, usage, contacts, webhook, auth, tags, executions, update, setup as setup_routes, plugins as plugins_routes, tools as tools_routes, admin as admin_routes, ai_engine as ai_engine_routes
 from db.repositories import tool_override_repo
-from agent import group_mentions
+from agent import group_mentions, agent_factory
+from agent import ai_tool_installer
 from plugins.loader import bootstrap_initial_plugins, discover_and_load, PluginRegistry
 from plugins.context import set_runtime as _set_plugin_runtime
 from plugins.events import (
@@ -99,6 +100,20 @@ def create_app(
             register_plugin_events(loaded.id, loaded.event_handlers)
         if loaded.filters:
             register_plugin_filters(loaded.id, loaded.filters)
+
+    # AI engine (config-in-DB + code-in-DB). Seed the default agent/prompt from
+    # the current config (idempotent), then materialise/install/register the
+    # DB-defined tools. Tools are registered AFTER core + plugin tools so the
+    # registry's collision no-op gives precedence to code over the DB. Both
+    # steps are best-effort: a failure never blocks the app from booting.
+    try:
+        agent_factory.seed_default_agent(settings)
+    except Exception as e:
+        logger.warning("AI engine seed failed: %s", e)
+    try:
+        ai_tool_installer.install_and_register(agent_handler, settings.data_dir)
+    except Exception as e:
+        logger.warning("AI tool installer failed: %s", e)
 
     # Tool override cleanup: drop rows for tools that no longer exist (renamed
     # in core, or belonging to a plugin that was removed). Then build the
@@ -317,6 +332,7 @@ def create_app(
     plugins_routes.register_routes(app, deps)
     tools_routes.register_routes(app, deps)
     admin_routes.register_routes(app, deps)
+    ai_engine_routes.register_routes(app, deps)
 
     # ── Plugin routers and static assets ──────────────────────────────
     for loaded in registry.loaded.values():
