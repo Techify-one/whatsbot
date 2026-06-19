@@ -1,12 +1,12 @@
 """AGNO-based agent engine for WhatsBot.
 
 Replaces the hand-rolled OpenAI tool-calling loop with the AGNO framework
-(``agno.agent.Agent`` / ``agno.team.Team``) while preserving every WhatsBot
+(``agno.agent.Agent``) while preserving every WhatsBot
 plugin hook (filters + events), usage accounting and execution tracking.
 
 Design notes
 ------------
-* **Stateless per request.** A fresh Agent/Team is built for each message so
+* **Stateless per request.** A fresh Agent is built for each message so
   the tool closures can capture a per-request ``executed`` collector without
   cross-talk between concurrent contacts. AGNO objects are cheap to build.
 * **WhatsBot owns history/system prompt.** We do *not* hand AGNO a ``db`` nor
@@ -18,11 +18,6 @@ Design notes
   wrapped in an ``agno.tools.function.Function`` whose entrypoint re-applies
   ``filter.tool.args`` / ``filter.tool.result`` and emits ``tool.before`` /
   ``tool.after`` — identical semantics to the old manual dispatch.
-* **Multi-agent.** When ``handler.multi_agent_enabled`` is set, a ``Team`` is
-  built: a coordinator (carrying the WhatsBot system prompt) plus one member
-  Agent per entry in ``handler.agents``. Members share the same wrapped tool
-  Functions, so filters/events/usage keep flowing regardless of which member
-  ends up calling a tool.
 
 The engine never talks to plugins directly for the *llm.before/llm.after*
 events — the handler owns those, since it also owns the surrounding
@@ -34,7 +29,6 @@ import logging
 from dataclasses import dataclass, field
 
 from agno.agent import Agent
-from agno.team import Team, TeamMode
 from agno.models.openai import OpenAILike
 from agno.models.message import Message
 from agno.tools.function import Function
@@ -236,10 +230,10 @@ def build_functions(handler, contact, sender, active_tools, executed, *, is_asyn
 
 
 # --------------------------------------------------------------------------- #
-# Agent / Team construction
+# Agent construction
 # --------------------------------------------------------------------------- #
-# Context builders shared by Agent and Team. WhatsBot owns the system prompt
-# and history, so AGNO must not prepend/resolve anything of its own.
+# Context builders for the Agent. WhatsBot owns the system prompt and history,
+# so AGNO must not prepend/resolve anything of its own.
 _CONTEXT_OFF = dict(
     add_history_to_context=False,
     resolve_in_context=False,
@@ -251,25 +245,8 @@ _CONTEXT_OFF = dict(
     telemetry=False,
     retries=0,
 )
-# ``build_context`` is Agent-only (Team has no such kwarg).
+# ``build_context`` configures the single Agent.
 _AGENT_CONTEXT_OFF = dict(_CONTEXT_OFF, build_context=False)
-
-
-def _resolve_team_mode(value: str) -> TeamMode:
-    try:
-        return TeamMode(str(value or "coordinate"))
-    except ValueError:
-        logger.warning("Unknown agent_team_mode %r; falling back to coordinate", value)
-        return TeamMode.coordinate
-
-
-def _select_member_functions(functions: dict[str, Function], spec_tools) -> list[Function]:
-    """Pick the Function subset for a team member from its ``tools`` config."""
-    if spec_tools in (None, "all", "*"):
-        return list(functions.values())
-    if isinstance(spec_tools, str):
-        spec_tools = [spec_tools]
-    return [functions[t] for t in spec_tools if t in functions]
 
 
 def _build_single_agent(handler, system_prompt, functions, model_config=None):
@@ -281,46 +258,8 @@ def _build_single_agent(handler, system_prompt, functions, model_config=None):
     )
 
 
-def _build_team(handler, system_prompt, functions):
-    members: list[Agent] = []
-    for spec in (handler.agents or []):
-        if not isinstance(spec, dict):
-            continue
-        member_fns = _select_member_functions(functions, spec.get("tools", "all"))
-        members.append(Agent(
-            name=spec.get("name") or spec.get("id") or "Especialista",
-            role=spec.get("role") or spec.get("description") or "",
-            instructions=spec.get("instructions") or None,
-            model=build_model(handler, spec.get("model") or None),
-            tools=member_fns or None,
-            **_AGENT_CONTEXT_OFF,
-        ))
-    if not members:
-        # Multi-agent enabled but no specialists configured — degrade to a
-        # single agent rather than constructing an empty (invalid) team.
-        logger.warning("multi_agent_enabled but no agents configured; using single agent")
-        return _build_single_agent(handler, system_prompt, functions)
-
-    return Team(
-        members=members,
-        model=build_model(handler),
-        mode=_resolve_team_mode(handler.agent_team_mode),
-        system_message=system_prompt,
-        # The coordinator can also reach the shared tools directly (e.g. in
-        # route mode where a member responds) — keeps behaviour predictable.
-        tools=list(functions.values()) or None,
-        **_CONTEXT_OFF,
-    )
-
-
 def build_runner(handler, system_prompt, functions, model_config=None):
-    """Return a ready-to-run Agent or Team based on handler config.
-
-    ``model_config`` (config-in-DB) applies to the single-agent path only; the
-    dormant multi-agent Team keeps using ``handler.model`` / per-member models.
-    """
-    if getattr(handler, "multi_agent_enabled", False):
-        return _build_team(handler, system_prompt, functions)
+    """Return a ready-to-run single Agent for one message."""
     return _build_single_agent(handler, system_prompt, functions, model_config=model_config)
 
 
@@ -373,7 +312,7 @@ def _extract_reply(run_output) -> str:
 # --------------------------------------------------------------------------- #
 async def run_async(handler, contact, sender, messages, active_tools,
                     model_config=None) -> EngineResult:
-    """Run the AGNO agent/team for one message (cancellable async path)."""
+    """Run the AGNO agent for one message (cancellable async path)."""
     system_prompt, convo = split_messages(messages)
     executed: list[dict] = []
     functions = build_functions(handler, contact, sender, active_tools, executed, is_async=True)
@@ -383,7 +322,6 @@ async def run_async(handler, contact, sender, messages, active_tools,
     track_step("llm_request", {
         "model": model_id,
         "engine": "agno",
-        "multi_agent": bool(getattr(handler, "multi_agent_enabled", False)),
         "context_messages": len(convo),
         "tools": list(functions.keys()),
     })
@@ -402,7 +340,7 @@ async def run_async(handler, contact, sender, messages, active_tools,
 
 def run_sync(handler, contact, sender, messages, active_tools,
              model_config=None) -> EngineResult:
-    """Run the AGNO agent/team for one message (synchronous path)."""
+    """Run the AGNO agent for one message (synchronous path)."""
     system_prompt, convo = split_messages(messages)
     executed: list[dict] = []
     functions = build_functions(handler, contact, sender, active_tools, executed, is_async=False)
@@ -412,7 +350,6 @@ def run_sync(handler, contact, sender, messages, active_tools,
     track_step("llm_request", {
         "model": model_id,
         "engine": "agno",
-        "multi_agent": bool(getattr(handler, "multi_agent_enabled", False)),
         "context_messages": len(convo),
         "tools": list(functions.keys()),
     })

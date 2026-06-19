@@ -47,8 +47,6 @@ _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "WHATSBOT_AUTO_REPLY": ("auto_reply", lambda v: v.lower() in ("1", "true", "yes")),
     "WHATSBOT_MAX_CONTEXT": ("max_context_messages", int),
     "WHATSBOT_BATCH_DELAY": ("message_batch_delay", float),
-    "WHATSBOT_MULTI_AGENT": ("multi_agent_enabled", lambda v: v.lower() in ("1", "true", "yes")),
-    "WHATSBOT_TEAM_MODE": ("agent_team_mode", str),
     "WHATSBOT_AI_ENGINE": ("ai_engine_enabled", lambda v: v.lower() in ("1", "true", "yes")),
 }
 
@@ -86,21 +84,6 @@ DEFAULT_CONFIG = {
     "transfer_alert_enabled": True,
     "transfer_alert_duration": 5,
     "group_reply_mode": "mention_only",
-    # --- Motor de agente (AGNO) ---------------------------------------------
-    # O WhatsBot usa o framework AGNO como motor de LLM. Quando
-    # ``multi_agent_enabled`` é True, em vez de um único agente é montado um
-    # AGNO Team: um coordenador (que carrega o ``system_prompt`` principal) +
-    # um agente especialista por entrada em ``agents``. Os especialistas
-    # compartilham as mesmas tools (filters/events/usage continuam valendo).
-    #
-    # ``agent_team_mode`` ∈ {coordinate, route, broadcast, tasks}:
-    #   - coordinate: o líder orquestra os membros e sintetiza a resposta.
-    #   - route: o líder roteia para UM especialista que responde direto.
-    # ``agents[].tools``: "all" (todas as tools) ou lista de nomes de tool.
-    # ``agents[].model``: "" usa o modelo default; senão um id de modelo.
-    # Os exemplos abaixo ficam INERTES enquanto multi_agent_enabled=False.
-    "multi_agent_enabled": False,
-    "agent_team_mode": "coordinate",
     # --- Motor de agente dirigido pelo banco (config-in-DB + code-in-DB) -----
     # Quando ``ai_engine_enabled`` é True, prompt/modelo/tools do agente são
     # lidos do banco (tabelas ``ai_*``) em vez das constantes do AgentHandler,
@@ -108,32 +91,6 @@ DEFAULT_CONFIG = {
     # Off (default) → caminho legado intacto (paridade total). Override por env
     # ``WHATSBOT_AI_ENGINE``.
     "ai_engine_enabled": False,
-    "agents": [
-        {
-            "id": "vendas",
-            "name": "Vendas",
-            "role": "Especialista em vendas, preços, planos e informações comerciais",
-            "instructions": (
-                "Você é o especialista de vendas. Responda dúvidas sobre produtos, "
-                "planos, preços e condições comerciais de forma objetiva e persuasiva, "
-                "sempre em português brasileiro."
-            ),
-            "tools": "all",
-            "model": "",
-        },
-        {
-            "id": "suporte",
-            "name": "Suporte",
-            "role": "Especialista em suporte, dúvidas técnicas e pós-venda",
-            "instructions": (
-                "Você é o especialista de suporte. Ajude o cliente a resolver "
-                "problemas técnicos e dúvidas de uso com paciência e clareza, "
-                "sempre em português brasileiro."
-            ),
-            "tools": "all",
-            "model": "",
-        },
-    ],
     "bot_phone": "",
     "bot_name": "",
     "default_ai_enabled": True,

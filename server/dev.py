@@ -58,8 +58,5 @@ app = create_app(
         audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
         image_model=settings.get("image_model", "google/gemini-2.5-flash"),
         default_ai_enabled=settings.get("default_ai_enabled", True),
-        multi_agent_enabled=settings.get("multi_agent_enabled", False),
-        agent_team_mode=settings.get("agent_team_mode", "coordinate"),
-        agents=settings.get("agents", []),
     ),
 )

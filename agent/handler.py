@@ -53,9 +53,6 @@ class AgentHandler:
         document_model: str = "google/gemini-2.5-flash",
         pricing_fn=None,
         default_ai_enabled: bool = True,
-        multi_agent_enabled: bool = False,
-        agent_team_mode: str = "coordinate",
-        agents: list[dict] | None = None,
         ai_engine_enabled: bool = False,
     ):
         self.api_key = api_key
@@ -67,11 +64,6 @@ class AgentHandler:
         self.image_model = image_model
         self.document_model = document_model
         self.default_ai_enabled = default_ai_enabled
-        # Multi-agent (AGNO Team) configuration. When enabled, the engine builds
-        # a coordinator + one specialist Agent per entry in ``agents``.
-        self.multi_agent_enabled = multi_agent_enabled
-        self.agent_team_mode = agent_team_mode
-        self.agents = agents or []
         # When True, prompt/model/tools are resolved per-request from the DB
         # (config-in-DB, see agent.agent_factory) instead of the in-code values.
         # Off → legacy behaviour (full parity).
@@ -358,9 +350,6 @@ class AgentHandler:
         document_model: str | None = None,
         split_messages: bool | None = None,
         default_ai_enabled: bool | None = None,
-        multi_agent_enabled: bool | None = None,
-        agent_team_mode: str | None = None,
-        agents: list[dict] | None = None,
         ai_engine_enabled: bool | None = None,
     ):
         if api_key is not None:
@@ -385,12 +374,6 @@ class AgentHandler:
             self.split_messages = split_messages
         if default_ai_enabled is not None:
             self.default_ai_enabled = default_ai_enabled
-        if multi_agent_enabled is not None:
-            self.multi_agent_enabled = multi_agent_enabled
-        if agent_team_mode is not None:
-            self.agent_team_mode = agent_team_mode
-        if agents is not None:
-            self.agents = agents
         if ai_engine_enabled is not None:
             self.ai_engine_enabled = ai_engine_enabled
 

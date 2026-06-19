@@ -117,9 +117,6 @@ def register_routes(app, deps):
             max_context_messages=settings.get("max_context_messages", 10),
             split_messages=settings.get("split_messages", True),
             default_ai_enabled=settings.get("default_ai_enabled", True),
-            multi_agent_enabled=settings.get("multi_agent_enabled", False),
-            agent_team_mode=settings.get("agent_team_mode", "coordinate"),
-            agents=settings.get("agents", []),
             ai_engine_enabled=settings.get("ai_engine_enabled", False),
         )
 

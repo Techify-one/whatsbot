@@ -10,7 +10,7 @@ Bot de WhatsApp com IA para usuários finais, distribuído como EXE Windows.
 - **PostgreSQL** — backend opcional via `psycopg[binary]`, configurável pela tela Settings → Banco
 - **GOWA** (go-whatsapp-web-multidevice v8.8.0) — bridge WhatsApp via REST, roda como subprocess
 - **Proxy LLM da Techify** (`https://llm.techify.one/api/v1`) — provider de LLM, API **compatível com OpenRouter/OpenAI**. Substituiu o OpenRouter direto: a chave é provisionada pelo wizard de 1ª execução e o crédito/recarga é gerido pela Techify. O base URL é configurável via env `LLM_API_BASE_URL`. A chave continua sendo persistida na config key `openrouter_api_key` (nome legado mantido por compatibilidade)
-- **AGNO** (`agno` 2.x) — framework de agentes usado como **motor de LLM** do agente. O loop de raciocínio + tool calling roda via `agno.agent.Agent` (ou `agno.team.Team` no modo multi-agente), apontado ao proxy Techify pelo model `OpenAILike`. Encapsulado em [agent/agno_engine.py](agent/agno_engine.py); o `AgentHandler` delega a ele preservando todos os hooks de plugin (filters/events), usage e execution tracking. Transcrição de áudio/descrição de imagem continuam em chamadas diretas ao cliente OpenAI (não são agênticas)
+- **AGNO** (`agno` 2.x) — framework de agentes usado como **motor de LLM** do agente. O loop de raciocínio + tool calling roda via `agno.agent.Agent`, apontado ao proxy Techify pelo model `OpenAILike`. Encapsulado em [agent/agno_engine.py](agent/agno_engine.py); o `AgentHandler` delega a ele preservando todos os hooks de plugin (filters/events), usage e execution tracking. Transcrição de áudio/descrição de imagem continuam em chamadas diretas ao cliente OpenAI (não são agênticas)
 - **FastAPI + uvicorn** — backend web (REST API + WebSocket)
 - **Preact + HTM + Tailwind CSS** — frontend web (sem build step, vendorizado local)
 - **PyInstaller** — empacotamento como EXE
@@ -23,7 +23,7 @@ server/app.py        → FastAPI app (endpoints REST, WebSocket, webhook, backgr
 gowa/manager.py      → lifecycle do subprocess GOWA (start/stop/watchdog)
 gowa/client.py       → HTTP client para REST API do GOWA (localhost:3000)
 agent/handler.py     → orquestra o processamento de mensagens (system prompt, filters/events, usage, save); delega o loop de LLM ao motor AGNO
-agent/agno_engine.py → motor AGNO: monta OpenAILike + Agent (ou Team multi-agente), envolve cada tool em agno Function (filters/events preservados), extrai reply/usage
+agent/agno_engine.py → motor AGNO: monta OpenAILike + Agent único, envolve cada tool em agno Function (filters/events preservados), extrai reply/usage
 agent/memory.py      → ContactMemory e TagRegistry (leitura/escrita no SQLite via repos)
 agent/group_mentions.py → resolução de @menções em grupos (número ↔ nome, lista de membros, @todos)
 agent/tools/         → tools core do LLM (uma tool por arquivo, agregadas em CORE_TOOLS)
@@ -203,26 +203,20 @@ O wizard só aparece em instalações ainda não configuradas. A chave é persis
 
 **Monitor de saldo** ([server/balance_monitor.py](server/balance_monitor.py)): consulta `/credits` do proxy, cacheia o resultado e, após chamadas ao LLM, emite o evento WS `low_balance` quando `remaining < low_balance_threshold` (default US$0,50, configurável; `low_balance_enabled` liga/desliga). O frontend (`LowBalanceModal.js`) abre um modal de recarga apontando para `account_url` (URL da conta Techify, salva junto com `access_token` na config). `GET /api/balance` retorna o snapshot inicial no boot.
 
-## Motor de agente (AGNO) e multi-agentes
+## Motor de agente (AGNO)
 
-O loop de raciocínio + tool calling roda no **AGNO** ([agent/agno_engine.py](agent/agno_engine.py)). O `AgentHandler` continua dono de TUDO em volta (system prompt + `filter.system_prompt`, montagem do histórico + `filter.llm.messages`, lista de tools + `filter.llm.tools`, eventos `llm.before`/`llm.after`, usage, `track_step`, save da resposta, `split_messages`) e só delega o miolo a `agno_engine.run_async` / `run_sync`.
+O loop de raciocínio + tool calling roda no **AGNO** ([agent/agno_engine.py](agent/agno_engine.py)). O motor roda **sempre um `Agent` único** por mensagem. O `AgentHandler` continua dono de TUDO em volta (system prompt + `filter.system_prompt`, montagem do histórico + `filter.llm.messages`, lista de tools + `filter.llm.tools`, eventos `llm.before`/`llm.after`, usage, `track_step`, save da resposta, `split_messages`) e só delega o miolo a `agno_engine.run_async` / `run_sync`.
 
 Pontos-chave da integração:
 
-- **Stateless por requisição**: um `Agent`/`Team` novo é montado por mensagem, para os closures de tool capturarem o coletor `executed` daquela request sem cross-talk entre contatos concorrentes.
+- **Stateless por requisição**: um `Agent` novo é montado por mensagem, para os closures de tool capturarem o coletor `executed` daquela request sem cross-talk entre contatos concorrentes.
 - **WhatsBot é dono do contexto**: o engine NÃO recebe `db` nem deixa o AGNO montar contexto próprio (`build_context=False`, `add_history_to_context=False`, etc.). O system prompt (já filtrado) vira `system_message`; o histórico (já filtrado) é convertido em `agno.models.message.Message` e passado como `input`.
 - **Tools**: cada schema OpenAI registrado é embrulhado num `agno.tools.function.Function` (`skip_entrypoint_processing=True`) cujo entrypoint reaplica `filter.tool.args`/`filter.tool.result` e emite `tool.before`/`tool.after` — mesma semântica do dispatch antigo. Async path usa entrypoint assíncrono; sync path usa síncrono.
 - **Usage**: lido de `run_output.metrics` (`RunMetrics.input_tokens/output_tokens`) e gravado via `AgentHandler._record_usage_tokens` (em vez de `response.usage`).
 - **Reply**: `_extract_reply` pega a ÚLTIMA mensagem `assistant` sem tool calls de `run_output.messages` (fallback: `run_output.content`). Isso evita que o AGNO concatene um "chatter" pré-tool com a resposta final — crítico com `split_messages` (saída JSON array) ligado.
 - **Transcrição/descrição de mídia** continuam em chamadas diretas ao cliente OpenAI no handler (não são agênticas) — o cliente OpenAI segue vivo só para isso e para `test_api_key`.
 
-**Multi-agentes (AGNO Team)**: quando `multi_agent_enabled=True` (config), em vez de um `Agent` único o engine monta um `Team`: um coordenador (carregando o `system_prompt` principal) + um `Agent` por entrada em `agents`. Config relevante (em [config/settings.py](config/settings.py), persistida e aplicada via `update_config`):
-
-- `multi_agent_enabled` (bool, default `False`) — env `WHATSBOT_MULTI_AGENT`.
-- `agent_team_mode` ∈ `{coordinate, route, broadcast, tasks}` (default `coordinate`) — env `WHATSBOT_TEAM_MODE`. `coordinate`: o líder orquestra e sintetiza; `route`: roteia para UM especialista que responde direto.
-- `agents`: lista de `{id, name, role, instructions, tools, model}`. `tools` = `"all"` ou lista de nomes de tool (subset); `model` = `""` usa o modelo default. Os exemplos bundled (`vendas`, `suporte`) ficam inertes enquanto `multi_agent_enabled=False`.
-
-Os especialistas compartilham as MESMAS `Function`s embrulhadas, então filters/events/usage continuam valendo independente de qual membro chamar a tool. Se `multi_agent_enabled=True` mas `agents` estiver vazio, o engine degrada para um `Agent` único (com warning).
+O motor roda **sempre um `Agent` único**. A base extensível para configurar agentes via banco (prompt/modelo/tools lidos do DB) é a infra `ai_agents` + [agent/agent_factory.py](agent/agent_factory.py), ligada por `ai_engine_enabled` — também single-agent.
 
 ## Fotos de perfil (avatars)
 
