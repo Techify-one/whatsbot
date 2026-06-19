@@ -670,6 +670,39 @@ class AgentHandler:
             if (s.get("function") or {}).get("name") in wanted
         ]
 
+    @staticmethod
+    def _encode_history_for_split(context_messages: list[dict]) -> list[dict]:
+        """Re-encode assistant turns as JSON arrays for the split_messages format.
+
+        When split_messages is on, the model is asked to answer with a JSON array
+        of strings. But the assistant history is stored already split into clean
+        plain text, so the model SEES its own past turns as plain text and mimics
+        that pattern — drifting out of the JSON format. The presence of tools
+        amplifies this drift dramatically (measured: 1/10 vs 15/15 success).
+
+        Fix: present each assistant turn to the model in the SAME JSON-array shape
+        it must produce. Consecutive assistant messages (one turn's split parts)
+        are merged into a single array, mirroring one real response. Only the
+        LLM-facing copy is changed — stored history and panel display are intact.
+        """
+        out: list[dict] = []
+        buffer: list[str] = []
+
+        def flush() -> None:
+            if buffer:
+                out.append({"role": "assistant",
+                            "content": json.dumps(buffer, ensure_ascii=False)})
+                buffer.clear()
+
+        for m in context_messages:
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+                buffer.append(m.get("content") or "")
+            else:
+                flush()
+                out.append(m)
+        flush()
+        return out
+
     def _build_system_prompt(self, contact: ContactMemory,
                              base_prompt: str | None = None) -> str:
         """Build system prompt with contact info and current date/time injected.
@@ -769,22 +802,43 @@ class AgentHandler:
         )
         if self.split_messages:
             prompt += (
-                "\n\n--- Formato de resposta ---\n"
-                "IMPORTANTE: Você DEVE responder SEMPRE em formato JSON array de strings.\n"
-                "Cada string é uma mensagem separada que será enviada no WhatsApp.\n"
-                "Regras:\n"
-                "- Seja DIRETO e CONCISO. Não enrole. Responda apenas o necessário.\n"
-                "- Respostas curtas e simples: USE APENAS 1 MENSAGEM (array com 1 elemento)\n"
-                "- Só divida em múltiplas mensagens quando a resposta total for LONGA (mais de 4-5 linhas)\n"
-                "- Quando dividir: máximo 2 a 3 partes, cada uma com 1-3 linhas\n"
-                "- NÃO separe saudação do conteúdo se a resposta for curta\n"
-                "- NÃO use markdown nem formatação especial\n"
-                "Exemplos:\n"
+                "\n\n--- FORMATO DE SAÍDA (OBRIGATÓRIO) ---\n"
+                "Sua resposta INTEIRA deve ser UM array JSON de strings — nada mais.\n"
+                "O PRIMEIRO caractere da sua saída é '[' e o ÚLTIMO é ']'.\n"
+                "Cada string do array vira uma mensagem separada no WhatsApp.\n"
+                "\n"
+                "PROIBIDO (quebra o sistema):\n"
+                "- Escrever qualquer coisa fora do array (sem texto antes do '[' nem depois do ']').\n"
+                "- Usar separadores entre mensagens: nada de '---', 'response', '\\n\\n', bullets, números.\n"
+                "  A ÚNICA forma de separar mensagens é criar outro elemento (string) no MESMO array.\n"
+                "- Retornar vários arrays. É sempre UM único array, com um único '[' e um único ']'.\n"
+                "- Markdown, títulos ou formatação especial dentro das strings.\n"
+                "\n"
+                "Como dividir:\n"
+                "- Cada mensagem deve ser CURTA (1 a 3 linhas). Mensagens grandes ficam horríveis.\n"
+                "- Resposta simples = array com 1 elemento só. Não separe a saudação do conteúdo curto.\n"
+                "- Dados distintos (link, chave PIX, valor, instrução) = cada um em seu próprio elemento.\n"
+                "\n"
+                "EXEMPLO de como a sua resposta DEVE ser.\n"
+                "Se você fosse mandar isto (NÃO faça assim, é uma só mensagem gigante):\n"
+                "  Ótimo! Já vou te mandar o link do e-book.\n"
+                "  https://exemplo.com/ebook\n"
+                "  Faça o PIX de R$27 pra liberar o acesso.\n"
+                "  Chave: f765ce68-49ba-4c08-9624-8b1fd63779b2\n"
+                "  Aparece como: Techify\n"
+                "  Quando pagar, me manda o print que eu confiro.\n"
+                "Você DEVE responder assim (array JSON, cada parte uma mensagem curta):\n"
+                '[\"Ótimo! Já vou te mandar o link do e-book.\", '
+                '\"https://exemplo.com/ebook\", '
+                '\"Faça o PIX de R$27 pra liberar o acesso.\", '
+                '\"Chave: f765ce68-49ba-4c08-9624-8b1fd63779b2\", '
+                '\"Aparece como: Techify\", '
+                '\"Quando pagar, me manda o print que eu confiro.\"]\n'
+                "\n"
+                "Mais exemplos:\n"
                 'Resposta curta: [\"Ok, só um minuto!\"]\n'
-                'Resposta longa: [\"Então, sobre o plano mensal...\", '
-                '\"O valor é R$99 e inclui X, Y e Z\", \"Quer que eu te mande o link?\"]\n'
-                "Retorne APENAS o JSON array, sem texto antes ou depois.\n"
-                "--- Fim do formato ---"
+                'Resposta média: [\"Sobre o plano mensal:\", \"São R$99 e inclui X, Y e Z.\", \"Quer o link?\"]\n'
+                "--- FIM DO FORMATO ---"
             )
         return prompt
 
@@ -817,6 +871,8 @@ class AgentHandler:
             contact.add_message("user", text or "", media_type=media_type, media_path=media_path)
 
         context_messages = contact.get_context_messages(self.max_context_messages)
+        if self.split_messages:
+            context_messages = self._encode_history_for_split(context_messages)
 
         # Config-in-DB: resolve the DB-driven agent for this contact (or None to
         # use the in-code prompt/model/tools — full parity when the flag is off).
@@ -948,6 +1004,8 @@ class AgentHandler:
             contact.add_message("user", text or "", media_type=media_type, media_path=media_path)
 
         context_messages = contact.get_context_messages(self.max_context_messages)
+        if self.split_messages:
+            context_messages = self._encode_history_for_split(context_messages)
 
         # Config-in-DB: resolve the DB-driven agent for this contact (or None to
         # use the in-code prompt/model/tools — full parity when the flag is off).
