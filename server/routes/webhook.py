@@ -681,21 +681,23 @@ def register_routes(app, deps):
         })
 
     async def _maybe_transcribe(
-        media_kind: str,            # "audio" or "image"
+        media_kind: str,            # "audio" | "image" | "document"
         path: str,
         *,
         phone: str,
         source: str,                # "batch" | "echo" | "group_no_mention"
         is_group: bool = False,
         group_jid: str | None = None,
+        file_name: str = "",        # document only — original filename
+        mimetype: str = "",         # document only — best-effort mime hint
     ) -> str:
-        """Run audio transcription / image description with plugin hooks.
+        """Run audio transcription / image description / document reading.
 
-        Wraps the two transcribe call sites in the codebase, exposing two
-        plugin hooks: ``filter.transcription.should_run`` (bool, can pull
-        the brake) and ``filter.transcription.result`` (str, can rewrite
-        the transcript). Returns the final transcription string — empty
-        when the action was skipped, failed, or yielded nothing.
+        Wraps the transcribe call sites in the codebase, exposing two plugin
+        hooks: ``filter.transcription.should_run`` (bool, can pull the brake)
+        and ``filter.transcription.result`` (str, can rewrite the transcript).
+        Returns the final transcription string — empty when the action was
+        skipped, failed, or yielded nothing.
         """
         # Core enabled-by-config gate — keep semantics identical to before
         # so plugins can only *narrow* the policy, never widen it.
@@ -704,6 +706,8 @@ def register_routes(app, deps):
             allow = (source == "echo" and audio_mode in ("sent", "both")) or (
                 source != "echo" and audio_mode in ("received", "both")
             )
+        elif media_kind == "document":
+            allow = bool(settings.get("document_transcription_enabled", True))
         else:  # image
             allow = bool(settings.get("image_transcription_enabled", True))
         if not allow:
@@ -723,10 +727,15 @@ def register_routes(app, deps):
         if not should:
             return ""
 
-        fn = (agent_handler.transcribe_audio if media_kind == "audio"
-              else agent_handler.describe_image)
         try:
-            raw = await asyncio.to_thread(fn, path, phone)
+            if media_kind == "audio":
+                raw = await asyncio.to_thread(agent_handler.transcribe_audio, path, phone)
+            elif media_kind == "document":
+                raw = await asyncio.to_thread(
+                    agent_handler.transcribe_document, path, phone, file_name, mimetype
+                )
+            else:
+                raw = await asyncio.to_thread(agent_handler.describe_image, path, phone)
         except Exception as e:
             logger.error(
                 "[Transcription] %s failed for %s: %s",
@@ -736,6 +745,7 @@ def register_routes(app, deps):
 
         extras["model"] = (
             getattr(agent_handler, "audio_model", None) if media_kind == "audio"
+            else getattr(agent_handler, "document_model", None) if media_kind == "document"
             else getattr(agent_handler, "image_model", None)
         )
         final = await apply_filter(
@@ -894,6 +904,9 @@ def register_routes(app, deps):
                 text = item.get("text", "")
                 image_path = item.get("image_path")
                 audio_path = item.get("audio_path")
+                document_path = (item.get("media_path")
+                                 if item.get("media_type") == "document" else None)
+                doc_extras = item.get("media_extras") or {}
 
                 # media_type/media_path resolved by _extract_media; fall back to
                 # the image/audio paths for items predating the typed fields.
@@ -936,6 +949,15 @@ def register_routes(app, deps):
                         is_group=contact.is_group,
                         group_jid=phone if contact.is_group else None,
                     )
+                elif document_path:
+                    transcription = await _maybe_transcribe(
+                        "document", document_path,
+                        phone=phone, source="batch",
+                        is_group=contact.is_group,
+                        group_jid=phone if contact.is_group else None,
+                        file_name=doc_extras.get("file_name") or "",
+                        mimetype=doc_extras.get("mimetype") or "",
+                    )
 
                 if transcription:
                     if audio_path:
@@ -943,6 +965,9 @@ def register_routes(app, deps):
                     elif image_path:
                         desc_prefix = f"[Descrição da imagem]: {transcription}"
                         new_content = f"{desc_prefix}\n{text}" if text else desc_prefix
+                    elif document_path:
+                        doc_prefix = f"[Conteúdo do documento]: {transcription}"
+                        new_content = f"{text}\n{doc_prefix}" if text else doc_prefix
                     else:
                         new_content = None
                     if new_content:
@@ -952,7 +977,7 @@ def register_routes(app, deps):
                     if audio_path:
                         await _deliver_audio_transcription(phone, contact, transcription)
                     else:
-                        # Image description — always delivered as a private panel card.
+                        # Image/document content — delivered as a private panel card.
                         contact.add_message("transcription", transcription)
                         await ws_manager.broadcast("new_message", {
                             "phone": phone,
@@ -984,6 +1009,9 @@ def register_routes(app, deps):
                 elif image_path and transcription:
                     prefix = f"[Descrição da imagem]: {transcription}"
                     llm_text = f"{prefix}\n{text}" if text else prefix
+                elif document_path and transcription:
+                    doc_prefix = f"[Conteúdo do documento]: {transcription}"
+                    llm_text = f"{text}\n{doc_prefix}" if text else doc_prefix
 
                 try:
                     await asyncio.to_thread(gowa_client.send_chat_presence, phone)
@@ -1776,6 +1804,7 @@ def register_routes(app, deps):
             # Transcribe audio/describe image even though the AI won't reply, so the
             # transcription card still appears in the panel — matches private-chat UX.
             transcription = ""
+            doc_path_grp = media_path if media_type == "document" else None
             if audio_path:
                 transcription = await _maybe_transcribe(
                     "audio", audio_path,
@@ -1788,6 +1817,14 @@ def register_routes(app, deps):
                     phone=phone, source="group_no_mention",
                     is_group=True, group_jid=phone,
                 )
+            elif doc_path_grp:
+                transcription = await _maybe_transcribe(
+                    "document", doc_path_grp,
+                    phone=phone, source="group_no_mention",
+                    is_group=True, group_jid=phone,
+                    file_name=(media_extras or {}).get("file_name") or "",
+                    mimetype=(media_extras or {}).get("mimetype") or "",
+                )
 
             saved_text = display_text
             if transcription and audio_path:
@@ -1795,6 +1832,9 @@ def register_routes(app, deps):
             elif transcription and image_path:
                 desc_prefix = f"[Descrição da imagem]: {transcription}"
                 saved_text = f"{desc_prefix}\n{display_text}" if display_text else desc_prefix
+            elif transcription and doc_path_grp:
+                doc_prefix = f"[Conteúdo do documento]: {transcription}"
+                saved_text = f"{display_text}\n{doc_prefix}" if display_text else doc_prefix
 
             contact_obj = agent_handler._get_contact(phone)
             await asyncio.to_thread(

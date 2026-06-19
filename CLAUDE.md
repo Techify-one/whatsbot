@@ -8,7 +8,7 @@ Bot de WhatsApp com IA para usuários finais, distribuído como EXE Windows.
 - **SQLAlchemy 2.0 Core + Alembic** — camada de dados portável (Core, sem ORM declarativo)
 - **SQLite** — banco default (WAL mode, driver `sqlite3` da stdlib)
 - **PostgreSQL** — backend opcional via `psycopg[binary]`, configurável pela tela Settings → Banco
-- **GOWA** (go-whatsapp-web-multidevice v8.5.0) — bridge WhatsApp via REST, roda como subprocess
+- **GOWA** (go-whatsapp-web-multidevice v8.8.0) — bridge WhatsApp via REST, roda como subprocess
 - **Proxy LLM da Techify** (`https://llm.techify.one/api/v1`) — provider de LLM, API **compatível com OpenRouter/OpenAI**. Substituiu o OpenRouter direto: a chave é provisionada pelo wizard de 1ª execução e o crédito/recarga é gerido pela Techify. O base URL é configurável via env `LLM_API_BASE_URL`. A chave continua sendo persistida na config key `openrouter_api_key` (nome legado mantido por compatibilidade)
 - **AGNO** (`agno` 2.x) — framework de agentes usado como **motor de LLM** do agente. O loop de raciocínio + tool calling roda via `agno.agent.Agent` (ou `agno.team.Team` no modo multi-agente), apontado ao proxy Techify pelo model `OpenAILike`. Encapsulado em [agent/agno_engine.py](agent/agno_engine.py); o `AgentHandler` delega a ele preservando todos os hooks de plugin (filters/events), usage e execution tracking. Transcrição de áudio/descrição de imagem continuam em chamadas diretas ao cliente OpenAI (não são agênticas)
 - **FastAPI + uvicorn** — backend web (REST API + WebSocket)
@@ -286,9 +286,9 @@ Formato de resposta REST: `{"ok": bool, "data": ..., "error": ...}`
 
 Eventos WebSocket (frontend): `{"event": "...", "data": {...}}` — inclui `status`, `qr_update`, `gowa_status`, `config_saved`, `new_message`, `message_reaction`, `message_revoked`, `message_deleted`, `contact_pinned`, `group_participants_changed`, `avatar_updated` (`{phone, v}` — `v` = mtime do arquivo, usado pra cache-bust da foto), `low_balance` (saldo abaixo do threshold → abre o modal de recarga).
 
-## GOWA REST API (endpoints reais — v8.5.0 multi-device)
+## GOWA REST API (endpoints reais — v8.8.0 multi-device)
 
-IMPORTANTE: O GOWA v8.5.0 é multi-device. Antes de usar qualquer endpoint, é necessário criar um device via `POST /devices`. Após criação, todas as requests (exceto `/devices`) exigem header `X-Device-Id`.
+IMPORTANTE: O GOWA v8.8.0 é multi-device. Antes de usar qualquer endpoint, é necessário criar um device via `POST /devices`. Após criação, todas as requests (exceto `/devices`) exigem header `X-Device-Id`.
 
 | Operação | Método | Endpoint | Notas |
 |---|---|---|---|

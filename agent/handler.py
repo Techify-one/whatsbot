@@ -5,6 +5,7 @@ import dataclasses
 import json
 import logging
 import mimetypes
+import re
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -49,6 +50,7 @@ class AgentHandler:
         model: str = "deepseek/deepseek-v4-pro",
         audio_model: str = "google/gemini-2.5-flash",
         image_model: str = "google/gemini-2.5-flash",
+        document_model: str = "google/gemini-2.5-flash",
         pricing_fn=None,
         default_ai_enabled: bool = True,
         multi_agent_enabled: bool = False,
@@ -63,6 +65,7 @@ class AgentHandler:
         self.model = model
         self.audio_model = audio_model
         self.image_model = image_model
+        self.document_model = document_model
         self.default_ai_enabled = default_ai_enabled
         # Multi-agent (AGNO Team) configuration. When enabled, the engine builds
         # a coordinator + one specialist Agent per entry in ``agents``.
@@ -352,6 +355,7 @@ class AgentHandler:
         model: str | None = None,
         audio_model: str | None = None,
         image_model: str | None = None,
+        document_model: str | None = None,
         split_messages: bool | None = None,
         default_ai_enabled: bool | None = None,
         multi_agent_enabled: bool | None = None,
@@ -375,6 +379,8 @@ class AgentHandler:
             self.audio_model = audio_model
         if image_model is not None:
             self.image_model = image_model
+        if document_model is not None:
+            self.document_model = document_model
         if split_messages is not None:
             self.split_messages = split_messages
         if default_ai_enabled is not None:
@@ -491,6 +497,156 @@ class AgentHandler:
         except Exception as e:
             logger.error("Image description failed: %s", e)
             track_step("error", {"error": str(e), "phase": "image_description"}, status="error")
+            return ""
+
+    # Plain-text document extensions read directly from disk (no LLM needed).
+    _TEXT_DOC_EXTS = {
+        "txt", "text", "md", "markdown", "csv", "tsv", "log", "json", "xml",
+        "html", "htm", "yaml", "yml", "ini", "cfg", "conf", "srt", "vtt", "rtf",
+    }
+    # Max characters of locally-extracted text fed back as the "transcription".
+    _DOC_TEXT_LIMIT = 20000
+
+    @staticmethod
+    def _doc_kind(file_name: str, path: "Path", mimetype: str) -> str:
+        """Classify a document into pdf | docx | text | unsupported.
+
+        Extension (from the original filename first, then the on-disk path)
+        wins; mimetype is the fallback since GOWA's auto-download path is often
+        UUID-based without a usable suffix.
+        """
+        ext = ""
+        for cand in (file_name, str(path)):
+            if cand:
+                e = Path(cand).suffix.lower().lstrip(".")
+                if e:
+                    ext = e
+                    break
+        mt = (mimetype or "").lower()
+        if ext == "pdf" or "pdf" in mt:
+            return "pdf"
+        if ext == "docx" or "wordprocessingml" in mt:
+            return "docx"
+        if (ext in AgentHandler._TEXT_DOC_EXTS or mt.startswith("text/")
+                or mt in ("application/json", "application/xml")):
+            return "text"
+        return "unsupported"
+
+    @staticmethod
+    def _extract_docx_text(p: "Path") -> str:
+        """Extract visible text from a .docx (zip of XML) using stdlib only."""
+        import zipfile
+        import html as _html
+        try:
+            with zipfile.ZipFile(p) as z:
+                xml = z.read("word/document.xml").decode("utf-8", "ignore")
+        except Exception as e:
+            logger.warning("docx extraction failed for %s: %s", p, e)
+            return ""
+        # Paragraph + line breaks → newlines, then strip every tag.
+        xml = xml.replace("</w:p>", "\n").replace("<w:br/>", "\n")
+        text = re.sub(r"<[^>]+>", "", xml)
+        return _html.unescape(text).strip()
+
+    def transcribe_document(
+        self,
+        document_path: str,
+        phone: str = "",
+        file_name: str = "",
+        mimetype: str = "",
+    ) -> str:
+        """Read/transcribe a document (PDF, DOCX, plain text) into text.
+
+        PDFs go to the configured ``document_model`` via the OpenRouter-style
+        ``file`` content part (the model handles both digital and scanned PDFs).
+        DOCX and plain-text files are extracted locally with stdlib — no LLM
+        call needed. Unsupported formats (legacy .doc, spreadsheets, …) return
+        an empty string so the caller falls back to just the document label.
+        """
+        try:
+            p = Path(document_path)
+            if not p.is_absolute():
+                p = Path(__file__).resolve().parent.parent / p
+            if not p.exists():
+                logger.warning("Document not found for transcription: %s", document_path)
+                return ""
+
+            kind = self._doc_kind(file_name, p, mimetype)
+
+            if kind == "docx":
+                result = self._extract_docx_text(p)[: self._DOC_TEXT_LIMIT].strip()
+                if result:
+                    track_step("media_processed", {
+                        "type": "document", "model": "local-docx",
+                        "transcription_length": len(result),
+                    })
+                    logger.info("Document (docx) extracted (%d chars)", len(result))
+                return result
+
+            if kind == "text":
+                try:
+                    result = p.read_text(encoding="utf-8", errors="ignore")
+                except Exception as e:
+                    logger.warning("Text document read failed for %s: %s", p, e)
+                    return ""
+                result = result[: self._DOC_TEXT_LIMIT].strip()
+                if result:
+                    track_step("media_processed", {
+                        "type": "document", "model": "local-text",
+                        "transcription_length": len(result),
+                    })
+                    logger.info("Document (text) read (%d chars)", len(result))
+                return result
+
+            if kind != "pdf":
+                logger.info("Document type unsupported for transcription: %s (%s)",
+                            file_name or document_path, mimetype)
+                return ""
+
+            # PDF → LLM file input.
+            if not self.api_key:
+                return ""
+            data = p.read_bytes()
+            b64 = base64.b64encode(data).decode()
+            client = self._get_client()
+            response = client.chat.completions.create(
+                model=self.document_model,
+                timeout=120,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": file_name or p.name or "document.pdf",
+                                "file_data": f"data:application/pdf;base64,{b64}",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "Extraia e transcreva todo o conteúdo textual deste "
+                                "documento em português brasileiro, incluindo tabelas e "
+                                "dados relevantes de forma organizada. Retorne apenas o "
+                                "conteúdo do documento, sem comentários adicionais."
+                            ),
+                        },
+                    ],
+                }],
+                max_tokens=4096,
+            )
+            self._record_usage(phone, "document", self.document_model, response)
+            result = (response.choices[0].message.content or "").strip()
+            track_step("media_processed", {
+                "type": "document",
+                "model": self.document_model,
+                "transcription_length": len(result),
+            })
+            logger.info("Document transcribed (%d chars): %s", len(result), result[:80])
+            return result
+        except Exception as e:
+            logger.error("Document transcription failed: %s", e)
+            track_step("error", {"error": str(e), "phase": "document_transcription"}, status="error")
             return ""
 
     def _get_contact(self, phone: str) -> ContactMemory:

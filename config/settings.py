@@ -40,6 +40,7 @@ _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "WHATSBOT_MODEL": ("model", str),
     "WHATSBOT_AUDIO_MODEL": ("audio_model", str),
     "WHATSBOT_IMAGE_MODEL": ("image_model", str),
+    "WHATSBOT_DOCUMENT_MODEL": ("document_model", str),
     "WHATSBOT_SYSTEM_PROMPT": ("system_prompt", str),
     "WHATSBOT_WEB_PORT": ("web_port", int),
     "WHATSBOT_GOWA_PORT": ("gowa_port", int),
@@ -61,6 +62,7 @@ DEFAULT_CONFIG = {
     "model": "deepseek/deepseek-v4-pro",
     "audio_model": "google/gemini-2.5-flash",
     "image_model": "google/gemini-2.5-flash",
+    "document_model": "google/gemini-2.5-flash",
     "system_prompt": (
         "Você é um assistente útil e amigável. Responda de forma clara e concisa. "
         "Use português brasileiro."
@@ -80,6 +82,7 @@ DEFAULT_CONFIG = {
     "audio_transcription_target": "private",
     "audio_transcription_chat_prefix": "",
     "image_transcription_enabled": True,
+    "document_transcription_enabled": True,
     "transfer_alert_enabled": True,
     "transfer_alert_duration": 5,
     "group_reply_mode": "mention_only",

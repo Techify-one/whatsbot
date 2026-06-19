@@ -33,6 +33,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [audioTranscriptionTarget, setAudioTranscriptionTarget] = useState('private');
   const [audioTranscriptionChatPrefix, setAudioTranscriptionChatPrefix] = useState('');
   const [imageTranscriptionEnabled, setImageTranscriptionEnabled] = useState(true);
+  const [documentTranscriptionEnabled, setDocumentTranscriptionEnabled] = useState(true);
   const [transferAlertEnabled, setTransferAlertEnabled] = useState(true);
   const [transferAlertDuration, setTransferAlertDuration] = useState(5);
   const [lowBalanceEnabled, setLowBalanceEnabled] = useState(true);
@@ -90,6 +91,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       setAudioTranscriptionTarget(config.audio_transcription_target ?? 'private');
       setAudioTranscriptionChatPrefix(config.audio_transcription_chat_prefix ?? '');
       setImageTranscriptionEnabled(config.image_transcription_enabled ?? true);
+      setDocumentTranscriptionEnabled(config.document_transcription_enabled ?? true);
       setTransferAlertEnabled(config.transfer_alert_enabled ?? true);
       setTransferAlertDuration(config.transfer_alert_duration ?? 5);
       setLowBalanceEnabled(config.low_balance_enabled ?? true);
@@ -195,6 +197,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       audio_transcription_target: audioTranscriptionTarget,
       audio_transcription_chat_prefix: audioTranscriptionChatPrefix,
       image_transcription_enabled: imageTranscriptionEnabled,
+      document_transcription_enabled: documentTranscriptionEnabled,
       transfer_alert_enabled: transferAlertEnabled,
       transfer_alert_duration: parseInt(transferAlertDuration, 10) || 5,
       low_balance_enabled: lowBalanceEnabled,
@@ -334,6 +337,34 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
             </div>
             <span class="block text-xs text-wa-secondary mt-1">
               Usa IA para descrever automaticamente o conteúdo de imagens recebidas pelo contato
+            </span>
+          </div>
+        </label>
+
+        <!-- Document transcription toggle -->
+        <label class="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${documentTranscriptionEnabled ? 'bg-green-50 border-green-200 hover:bg-green-100' : 'bg-wa-panel border-wa-border hover:bg-wa-hover'}">
+          <input
+            type="checkbox"
+            checked=${documentTranscriptionEnabled}
+            onChange=${(e) => setDocumentTranscriptionEnabled(e.target.checked)}
+            class="w-4 h-4 rounded border-wa-border accent-wa-teal mt-0.5"
+          />
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class=${documentTranscriptionEnabled ? 'text-green-600' : 'text-wa-secondary'}>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10 9 9 9 8 9"/>
+              </svg>
+              <span class="text-sm font-semibold text-wa-text">Ler documento</span>
+              <span class="text-xs px-2 py-0.5 rounded-full ${documentTranscriptionEnabled ? 'bg-green-600 text-white' : 'bg-wa-secondary/20 text-wa-secondary'}">
+                ${documentTranscriptionEnabled ? 'Ativado' : 'Desativado'}
+              </span>
+            </div>
+            <span class="block text-xs text-wa-secondary mt-1">
+              Usa IA para extrair o conteúdo de documentos recebidos (PDF, DOCX e arquivos de texto)
             </span>
           </div>
         </label>

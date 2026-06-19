@@ -40,11 +40,11 @@ class GOWASendError(Exception):
 
     def __init__(self, message: str, error_type: str = "unknown"):
         super().__init__(message)
-        self.error_type = error_type  # network, api, unknown
+        self.error_type = error_type  # network, api, reachout_timelock, unknown
 
 
 class GOWAClient:
-    """HTTP client for the GOWA REST API (go-whatsapp-web-multidevice v8.5.0)."""
+    """HTTP client for the GOWA REST API (go-whatsapp-web-multidevice v8.8.0)."""
 
     def __init__(self, port: int = 3000, timeout: float = 15.0):
         self.base_url = f"http://127.0.0.1:{port}"
@@ -84,13 +84,28 @@ class GOWAClient:
             logger.error("GOWA HTTP %s %s -> %s", method, path, e.response.status_code)
             if raise_on_error:
                 status = e.response.status_code
-                # Try to extract error message from GOWA response
+                # Try to extract error message/code from GOWA response
                 detail = ""
+                code = ""
                 try:
                     body = e.response.json()
                     detail = body.get("message", body.get("error", ""))
+                    code = str(body.get("code", ""))
                 except Exception:
                     pass
+                # WhatsApp's server-side reach-out timelock (error 463): an
+                # anti-spam restriction on starting new chats. GOWA >= 8.8.0
+                # surfaces it as HTTP 429 / code WA_REACHOUT_TIMELOCK; older
+                # builds returned an opaque HTTP 500 "server returned error 463".
+                # It cannot be bypassed by the API — flag it so callers can show
+                # actionable guidance instead of a generic failure.
+                blob = f"{code} {detail}".lower()
+                if status == 429 or "reachout" in blob or "timelock" in blob \
+                        or "error 463" in blob:
+                    raise GOWASendError(
+                        detail or "WhatsApp recusou o envio (reach-out timelock, erro 463).",
+                        error_type="reachout_timelock",
+                    )
                 msg = f"Erro da API do WhatsApp (HTTP {status})"
                 if detail:
                     msg += f": {detail}"

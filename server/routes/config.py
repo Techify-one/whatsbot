@@ -39,6 +39,7 @@ def register_routes(app, deps):
             "model": settings.get("model", "deepseek/deepseek-v4-pro"),
             "audio_model": settings.get("audio_model", "google/gemini-2.5-flash"),
             "image_model": settings.get("image_model", "google/gemini-2.5-flash"),
+            "document_model": settings.get("document_model", "google/gemini-2.5-flash"),
             "system_prompt": settings.get("system_prompt", ""),
             "group_reply_mode": settings.get("group_reply_mode", "mention_only"),
             "auto_reply": settings.get("auto_reply", True),
@@ -50,6 +51,7 @@ def register_routes(app, deps):
             "audio_transcription_target": settings.get("audio_transcription_target", "private"),
             "audio_transcription_chat_prefix": settings.get("audio_transcription_chat_prefix", ""),
             "image_transcription_enabled": settings.get("image_transcription_enabled", True),
+            "document_transcription_enabled": settings.get("document_transcription_enabled", True),
             "transfer_alert_enabled": settings.get("transfer_alert_enabled", True),
             "transfer_alert_duration": settings.get("transfer_alert_duration", 5),
             "max_executions": settings.get("max_executions", 200),
@@ -66,8 +68,10 @@ def register_routes(app, deps):
     async def save_config(body: dict):
         allowed_keys = {
             "openrouter_api_key", "model", "audio_model", "image_model",
+            "document_model",
             "audio_transcription_mode", "audio_transcription_target",
             "audio_transcription_chat_prefix", "image_transcription_enabled",
+            "document_transcription_enabled",
             "system_prompt", "auto_reply",
             "max_context_messages", "message_batch_delay",
             "split_messages", "split_message_delay",
@@ -109,6 +113,7 @@ def register_routes(app, deps):
             model=settings.get("model", "deepseek/deepseek-v4-pro"),
             audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
             image_model=settings.get("image_model", "google/gemini-2.5-flash"),
+            document_model=settings.get("document_model", "google/gemini-2.5-flash"),
             max_context_messages=settings.get("max_context_messages", 10),
             split_messages=settings.get("split_messages", True),
             default_ai_enabled=settings.get("default_ai_enabled", True),
@@ -142,6 +147,7 @@ def register_routes(app, deps):
                 model=settings.get("model", "deepseek/deepseek-v4-pro"),
                 audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
                 image_model=settings.get("image_model", "google/gemini-2.5-flash"),
+                document_model=settings.get("document_model", "google/gemini-2.5-flash"),
                 max_context_messages=settings.get("max_context_messages", 10),
             )
             logger.info("API key tested and auto-saved.")

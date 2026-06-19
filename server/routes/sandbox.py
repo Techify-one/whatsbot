@@ -301,6 +301,29 @@ def register_routes(app, deps):
             await _broadcast_user_message(phone, content,
                                           media_type="document", media_path=rel_path)
 
+            abs_path = str(statics_senditems_dir / Path(rel_path).name)
+            transcription = ""
+            if settings.get("document_transcription_enabled", True):
+                try:
+                    transcription = await asyncio.to_thread(
+                        agent_handler.transcribe_document, abs_path, phone, filename, "",
+                    )
+                except Exception as e:
+                    logger.error("[Sandbox] Document transcription failed for %s: %s", phone, e)
+
+            if transcription:
+                doc_prefix = f"[Conteúdo do documento]: {transcription}"
+                new_content = f"{content}\n{doc_prefix}"
+                await asyncio.to_thread(
+                    agent_handler.update_last_user_message_content, phone, new_content,
+                )
+                contact.add_message("transcription", transcription)
+                await ws_manager.broadcast("new_message", {
+                    "phone": phone,
+                    "message": {"role": "transcription", "content": transcription,
+                                "ts": time.time()},
+                })
+
             replies = await _sandbox_reply(phone)
             await atrack_step("response_sent", {
                 "phone": phone, "reply_preview": "\n".join(replies)[:200],

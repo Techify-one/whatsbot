@@ -20,7 +20,7 @@ export WHATSBOT_GOWA_PORT="${WHATSBOT_GOWA_PORT:-64998}"
 cd "$(dirname "$0")"
 
 # Versão do GOWA que casa com o cliente em gowa/client.py e o Dockerfile.
-GOWA_VERSION="${GOWA_VERSION:-8.5.0}"
+GOWA_VERSION="${GOWA_VERSION:-8.8.0}"
 
 require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
