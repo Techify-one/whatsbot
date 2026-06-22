@@ -586,6 +586,55 @@ def register_routes(app, deps):
                     phone, ai_read, ai_reply, text[:80])
         return _ok(note_msg)
 
+    @app.post("/api/contacts/{phone}/improve")
+    async def generate_improvement(phone: str, body: dict):
+        """Analyze an AI reply flagged as wrong and save the analysis as a note.
+
+        The operator right-clicks a wrong AI reply, writes an optional
+        suggestion, and the LLM reviews the conversation, the main prompt and
+        the tools (available + used) to diagnose the issue and recommend prompt
+        edits. The conclusion is stored as a private note (panel-only).
+        """
+        feedback = (body.get("feedback") or "").strip()
+        target = body.get("message") or {}
+
+        try:
+            analysis = await asyncio.to_thread(
+                agent_handler.generate_improvement, phone, target, feedback)
+        except Exception as e:
+            logger.exception("[Improve] Failed to generate improvement for %s: %s", phone, e)
+            return _err(f"Erro ao gerar análise de melhoria: {e}", status=500)
+
+        analysis = (analysis or "").strip()
+        if not analysis:
+            return _err("A análise voltou vazia. Tente novamente.", status=500)
+
+        note_text = f"🔧 Análise de melhoria\n\n{analysis}"
+
+        try:
+            def _save():
+                contact = agent_handler._get_contact(phone)
+                contact.add_message("private_note", note_text)
+                return message_repo.get_last(contact.id)
+            saved = await asyncio.to_thread(_save)
+        except Exception as e:
+            logger.error("[Improve] Failed to save improvement note for %s: %s", phone, e)
+            return _err(f"Erro ao salvar a análise: {e}", status=500)
+
+        note_msg = {
+            "role": "private_note",
+            "content": note_text,
+            "ts": (saved or {}).get("ts", time.time()),
+            "status": None,
+        }
+        if saved and saved.get("_id"):
+            note_msg["_id"] = saved["_id"]
+        await ws_manager.broadcast("new_message", {"phone": phone, "message": note_msg})
+
+        logger.info("[Improve] Generated improvement note for %s (feedback=%r)",
+                    phone, feedback[:80])
+        return _ok(note_msg)
+
     @app.post("/api/contacts/{phone}/retry-send")
     async def retry_send_to_contact(phone: str, body: dict):
         """Retry sending a message that previously failed."""

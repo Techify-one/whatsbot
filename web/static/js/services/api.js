@@ -191,6 +191,13 @@ export async function sendPrivateMessage(phone, text, opts = {}) {
   return request('POST', `/api/contacts/${encodeURIComponent(phone)}/private-message`, body);
 }
 
+export async function generateImprovement(phone, { message, feedback } = {}) {
+  return request('POST', `/api/contacts/${encodeURIComponent(phone)}/improve`, {
+    message: message || null,
+    feedback: feedback || '',
+  });
+}
+
 export async function markAsRead(phone) {
   return request('POST', `/api/contacts/${encodeURIComponent(phone)}/read`);
 }

@@ -16,7 +16,7 @@ from agent.memory import ContactMemory, TagRegistry, _build_image_content
 from agent.tools import CORE_TOOLS
 from agent import group_mentions, agno_engine, agent_factory
 from config.settings import LLM_API_BASE_URL
-from db.repositories import message_repo, contact_repo, tool_override_repo
+from db.repositories import message_repo, contact_repo, tool_override_repo, execution_repo
 from agent.execution import track_step
 from plugins.context import ToolContext, PromptContext
 from plugins.events import (
@@ -824,6 +824,151 @@ class AgentHandler:
                 "--- FIM DO FORMATO ---"
             )
         return prompt
+
+    def _find_tools_used_around(self, phone: str, ts: float | None) -> list[dict]:
+        """Best-effort: return the tools the AI called for the reply at ``ts``.
+
+        Messages have no execution_id, so we match by phone + the execution
+        time window that contains the reply timestamp (with a small tolerance).
+        Returns a list of {"tool", "args"} dicts (possibly empty).
+        """
+        if not ts:
+            return []
+        used: list[dict] = []
+        try:
+            execs = execution_repo.list_executions(limit=50, phone=phone)
+            match = None
+            for e in execs:
+                started = e.get("started_at") or 0
+                completed = e.get("completed_at") or started
+                if started - 5 <= ts <= completed + 15:
+                    match = e
+                    break
+            if match:
+                full = execution_repo.get_by_id(match["id"]) or {}
+                for step in full.get("steps", []):
+                    if step.get("step_type") == "tool_executed":
+                        data = step.get("data") or {}
+                        used.append({"tool": data.get("tool"), "args": data.get("args")})
+        except Exception as e:
+            logger.warning("Failed to recover tool calls for improvement (%s): %s", phone, e)
+        return used
+
+    def generate_improvement(self, phone: str, target_message: dict | None,
+                             feedback: str) -> str:
+        """Analyze an AI reply the operator flagged as wrong and suggest fixes.
+
+        One-off, non-agentic LLM call. Gathers the contact's recent
+        conversation, the full system prompt, the registered tools and the
+        tools the AI actually used around the flagged reply, then asks the
+        model to (1) diagnose what went wrong and (2) recommend concrete
+        edits to the main prompt. Returns the analysis text — the caller
+        saves it as a private note.
+        """
+        if not self.api_key:
+            return "[WhatsBot] API key não configurada — não foi possível gerar a análise."
+
+        contact = self._get_contact(phone)
+
+        # Faithful main prompt for this contact (config-in-DB aware).
+        agent_spec = agent_factory.build_for_contact(self, contact)
+        base_prompt = agent_spec.base_prompt if agent_spec else None
+        system_prompt_str = self._build_system_prompt(contact, base_prompt=base_prompt)
+
+        # Available tools (enabled only), name + effective description.
+        try:
+            avail = [t for t in self.list_tools() if t.get("enabled")]
+        except Exception:
+            avail = []
+        avail_text = "\n".join(
+            f"- {t['name']}: {t.get('current_description') or ''}".rstrip(": ")
+            for t in avail
+        ) or "(nenhuma ferramenta registrada)"
+
+        target = target_message or {}
+        target_ts = target.get("ts")
+        target_content = (target.get("content") or "").strip() or "(sem texto)"
+
+        used = self._find_tools_used_around(phone, target_ts)
+        if used:
+            used_lines = []
+            for u in used:
+                args = u.get("args")
+                try:
+                    args_str = json.dumps(args, ensure_ascii=False)
+                except Exception:
+                    args_str = str(args)
+                used_lines.append(f"- {u.get('tool')}({args_str})")
+            used_text = "\n".join(used_lines)
+        else:
+            used_text = ("Nenhuma ferramenta foi usada nesta resposta "
+                         "(ou não foi possível rastrear a execução).")
+
+        # Plain-text transcript of the recent conversation. Mark the flagged
+        # reply inline so the model can pinpoint it.
+        limit = max(self.max_context_messages, 30)
+        rows = message_repo.get_context(contact.id, limit)
+        role_label = {"user": "Cliente", "assistant": "IA",
+                      "private_note": "Nota privada do operador"}
+        lines = []
+        for m in rows:
+            role = m.get("role")
+            if role == "assistant" and m.get("status") == "operator":
+                label = "Operador (humano)"
+            else:
+                label = role_label.get(role, role)
+            text = (m.get("content") or "").strip()
+            if not text and m.get("media_type"):
+                text = f"[{m['media_type']}]"
+            line = f"{label}: {text}"
+            if target_ts and abs((m.get("ts") or 0) - target_ts) < 1.0 \
+                    and role == "assistant":
+                line += "   ⟵ RESPOSTA MARCADA COMO INCORRETA"
+            lines.append(line)
+        transcript = "\n".join(lines) or "(sem histórico)"
+
+        analysis_system = (
+            "Você é um analista de qualidade de agentes de IA de atendimento no "
+            "WhatsApp. Um operador humano marcou uma resposta da IA como incorreta "
+            "ou problemática. Com base no prompt principal do agente, no histórico "
+            "da conversa, nas ferramentas disponíveis, nas ferramentas que a IA "
+            "efetivamente usou e no feedback do operador, produza uma análise "
+            "OBJETIVA e ACIONÁVEL, em português do Brasil, com duas seções:\n"
+            "1. Diagnóstico — o que a IA fez de errado nessa resposta e por quê "
+            "(cite o trecho relevante do prompt, ou a ferramenta que deveria / não "
+            "deveria ter sido usada).\n"
+            "2. Como ajustar o prompt principal — recomendações concretas: trechos "
+            "de texto para adicionar, remover ou reescrever no prompt principal "
+            "para evitar o erro. Quando útil, mostre a frase sugerida entre aspas, "
+            "pronta para colar.\n\n"
+            "Regras:\n"
+            "- Não invente ferramentas que não existem na lista fornecida.\n"
+            "- Seja conciso e direto; foque no que muda o comportamento da IA.\n"
+            "- Você fala apenas com o operador; não redija uma resposta ao cliente."
+        )
+        analysis_user = (
+            f"## PROMPT PRINCIPAL DO AGENTE (atual)\n{system_prompt_str}\n\n"
+            f"## FERRAMENTAS DISPONÍVEIS\n{avail_text}\n\n"
+            f"## FERRAMENTAS USADAS NESTA RESPOSTA\n{used_text}\n\n"
+            f"## HISTÓRICO RECENTE DA CONVERSA\n{transcript}\n\n"
+            f"## RESPOSTA MARCADA COMO INCORRETA\n{target_content}\n\n"
+            f"## FEEDBACK DO OPERADOR\n"
+            f"{feedback.strip() or '(o operador não escreveu um comentário; diagnostique pelo contexto)'}"
+        )
+
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self.model,
+            timeout=120,
+            temperature=0.4,
+            max_tokens=1600,
+            messages=[
+                {"role": "system", "content": analysis_system},
+                {"role": "user", "content": analysis_user},
+            ],
+        )
+        self._record_usage(phone, "improvement", self.model, response)
+        return (response.choices[0].message.content or "").strip()
 
     async def aprocess_message(self, sender: str, text: str, *,
                                save_user_message: bool = True,
