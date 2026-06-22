@@ -57,7 +57,10 @@ def get_all(contact_id: int) -> list[dict]:
 
 def get_context(contact_id: int, limit: int) -> list[dict]:
     """Return the last N eligible messages for LLM context."""
-    excluded = ("transcription", "tool_call", "system_notice")
+    # `system` = system-event messages (e.g. improvement analyses) that signal
+    # something happened but are NOT meant for the AI to read. Kept out of the
+    # LLM context here so they never leak into a reply.
+    excluded = ("transcription", "tool_call", "system_notice", "system")
     with get_engine().connect() as conn:
         rows = conn.execute(
             select(messages)

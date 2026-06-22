@@ -23,6 +23,7 @@ function Section({ title, children }) {
 export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [improvementModel, setImprovementModel] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [autoReply, setAutoReply] = useState(true);
   const [maxContext, setMaxContext] = useState(10);
@@ -81,6 +82,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
     if (config) {
       setApiKey(''); // Don't show masked key in input
       setModel(config.model || '');
+      setImprovementModel(config.improvement_model || '');
       setSystemPrompt(config.system_prompt || '');
       setAutoReply(config.auto_reply ?? true);
       setMaxContext(config.max_context_messages ?? 10);
@@ -187,6 +189,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   async function handleSave() {
     const data = {
       model: model.trim() || 'deepseek/deepseek-v4-pro',
+      improvement_model: improvementModel.trim(),
       system_prompt: systemPrompt,
       auto_reply: autoReply,
       max_context_messages: parseInt(maxContext, 10) || 10,
@@ -303,6 +306,19 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           ` : config.openrouter_api_key ? html`
             <p class="text-xs mt-1 text-wa-secondary">Chave salva: ${config.openrouter_api_key}</p>
           ` : null}
+        </div>
+
+        <!-- Improvement model -->
+        <div>
+          <label class="block text-sm font-semibold text-wa-text mb-1">Modelo de IA (sugestão de melhoria)</label>
+          <${ModelSelect}
+            value=${improvementModel}
+            onChange=${setImprovementModel}
+            placeholder="Usar o mesmo do chat"
+          />
+          <p class="text-xs mt-1 text-wa-secondary">
+            Modelo usado ao gerar análises de melhoria das respostas marcadas como incorretas. Deixe em branco para usar o modelo do chat.
+          </p>
         </div>
 
         <!-- Model -->

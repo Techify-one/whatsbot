@@ -611,10 +611,12 @@ def register_routes(app, deps):
 
         note_text = f"🔧 Análise de melhoria\n\n{analysis}"
 
+        # Saved as a `system` event message: shown in the panel but NOT read by
+        # the AI (excluded from LLM context in message_repo.get_context).
         try:
             def _save():
                 contact = agent_handler._get_contact(phone)
-                contact.add_message("private_note", note_text)
+                contact.add_message("system", note_text)
                 return message_repo.get_last(contact.id)
             saved = await asyncio.to_thread(_save)
         except Exception as e:
@@ -622,7 +624,7 @@ def register_routes(app, deps):
             return _err(f"Erro ao salvar a análise: {e}", status=500)
 
         note_msg = {
-            "role": "private_note",
+            "role": "system",
             "content": note_text,
             "ts": (saved or {}).get("ts", time.time()),
             "status": None,

@@ -48,6 +48,7 @@ class AgentHandler:
         max_context_messages: int = 10,
         inactivity_timeout_min: int = 30,
         model: str = "deepseek/deepseek-v4-pro",
+        improvement_model: str = "",
         audio_model: str = "google/gemini-2.5-flash",
         image_model: str = "google/gemini-2.5-flash",
         document_model: str = "google/gemini-2.5-flash",
@@ -60,6 +61,8 @@ class AgentHandler:
         self.max_context_messages = max_context_messages
         self.inactivity_timeout = inactivity_timeout_min * 60
         self.model = model
+        # Model for the "sugerir melhoria" analysis; empty → use self.model.
+        self.improvement_model = improvement_model
         self.audio_model = audio_model
         self.image_model = image_model
         self.document_model = document_model
@@ -345,6 +348,7 @@ class AgentHandler:
         max_context_messages: int | None = None,
         inactivity_timeout_min: int | None = None,
         model: str | None = None,
+        improvement_model: str | None = None,
         audio_model: str | None = None,
         image_model: str | None = None,
         document_model: str | None = None,
@@ -364,6 +368,8 @@ class AgentHandler:
             self.inactivity_timeout = inactivity_timeout_min * 60
         if model is not None:
             self.model = model
+        if improvement_model is not None:
+            self.improvement_model = improvement_model
         if audio_model is not None:
             self.audio_model = audio_model
         if image_model is not None:
@@ -906,7 +912,7 @@ class AgentHandler:
 
         # Plain-text transcript of the recent conversation. Mark the flagged
         # reply inline so the model can pinpoint it.
-        limit = max(self.max_context_messages, 30)
+        limit = self.max_context_messages
         rows = message_repo.get_context(contact.id, limit)
         role_label = {"user": "Cliente", "assistant": "IA",
                       "private_note": "Nota privada do operador"}
@@ -956,9 +962,10 @@ class AgentHandler:
             f"{feedback.strip() or '(o operador não escreveu um comentário; diagnostique pelo contexto)'}"
         )
 
+        analysis_model = self.improvement_model or self.model
         client = self._get_client()
         response = client.chat.completions.create(
-            model=self.model,
+            model=analysis_model,
             timeout=120,
             temperature=0.4,
             max_tokens=1600,
@@ -967,7 +974,7 @@ class AgentHandler:
                 {"role": "user", "content": analysis_user},
             ],
         )
-        self._record_usage(phone, "improvement", self.model, response)
+        self._record_usage(phone, "improvement", analysis_model, response)
         return (response.choices[0].message.content or "").strip()
 
     async def aprocess_message(self, sender: str, text: str, *,

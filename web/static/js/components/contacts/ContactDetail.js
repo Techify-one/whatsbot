@@ -832,6 +832,7 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
               const isTranscription = m.role === 'transcription';
               const isPrivateNote = m.role === 'private_note';
               const isSystemNotice = m.role === 'system_notice';
+              const isSystem = m.role === 'system';
               const isToolCall = m.role === 'tool_call';
               const isError = m.role === 'error';
               const isFirst = i === 0 || messages[i - 1].role !== m.role;
@@ -906,6 +907,35 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                       </span>
                       <span dangerouslySetInnerHTML=${{ __html: fmt(m.content)}}></span>
                       <span class="float-right ml-[8px] mt-[2px] text-[10px] leading-[14px] whitespace-nowrap opacity-60">
+                        ${formatBubbleTime(m.ts)}
+                      </span>
+                    </div>
+                  </div>
+                `];
+              }
+
+              if (isSystem) {
+                return [dateSeparator, html`
+                  <div key=${m._localId || i} data-mid=${m._id} class="flex justify-center mt-[4px]">
+                    <div
+                      onContextMenu=${(e) => openMsgMenu(e, m, false)}
+                      class="group max-w-[75%] rounded-[7.5px] px-[11px] pt-[6px] pb-[7px] text-[13px] leading-[18px] whitespace-pre-wrap relative shadow-sm"
+                      style="background: #374151; color: #e5e7eb; border: 1px solid #4b5563;">
+                      <button
+                        onClick=${(e) => openMsgMenu(e, m, false)}
+                        class="absolute top-[2px] right-[2px] opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity rounded-full p-[1px] hover:bg-black/20"
+                        title="Opções da mensagem"
+                      >
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="color:#9ca3af;">
+                          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
+                        </svg>
+                      </button>
+                      <span class="flex items-center gap-[5px] text-[10.5px] font-semibold mb-[3px] tracking-wide uppercase" style="color:#9ca3af;">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                        Sistema
+                      </span>
+                      <span dangerouslySetInnerHTML=${{ __html: fmt(m.content)}}></span>
+                      <span class="float-right ml-[8px] mt-[3px] text-[10.5px] leading-[14px] whitespace-nowrap" style="color:#9ca3af;">
                         ${formatBubbleTime(m.ts)}
                       </span>
                     </div>
@@ -1363,7 +1393,8 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
           } : null}
           items=${[
             ...((!msgMenu.message.revoked && mode !== 'private'
-                 && msgMenu.message.role !== 'private_note') ? [
+                 && msgMenu.message.role !== 'private_note'
+                 && msgMenu.message.role !== 'system') ? [
               { label: 'Responder', icon: ReplyIcon,
                 onClick: () => { setMode('reply'); setReplyingTo(msgMenu.message);
                                  setTimeout(() => inputRef.current?.focus(), 0); } },

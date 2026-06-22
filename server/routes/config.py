@@ -37,6 +37,7 @@ def register_routes(app, deps):
         return _ok({
             "openrouter_api_key": _mask_key(settings.get("openrouter_api_key", "")),
             "model": settings.get("model", "deepseek/deepseek-v4-pro"),
+            "improvement_model": settings.get("improvement_model", ""),
             "audio_model": settings.get("audio_model", "google/gemini-2.5-flash"),
             "image_model": settings.get("image_model", "google/gemini-2.5-flash"),
             "document_model": settings.get("document_model", "google/gemini-2.5-flash"),
@@ -67,7 +68,8 @@ def register_routes(app, deps):
     @app.put("/api/config")
     async def save_config(body: dict):
         allowed_keys = {
-            "openrouter_api_key", "model", "audio_model", "image_model",
+            "openrouter_api_key", "model", "improvement_model",
+            "audio_model", "image_model",
             "document_model",
             "audio_transcription_mode", "audio_transcription_target",
             "audio_transcription_chat_prefix", "image_transcription_enabled",
@@ -111,6 +113,7 @@ def register_routes(app, deps):
             api_key=settings.get("openrouter_api_key", ""),
             system_prompt=settings.get("system_prompt", ""),
             model=settings.get("model", "deepseek/deepseek-v4-pro"),
+            improvement_model=settings.get("improvement_model", ""),
             audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
             image_model=settings.get("image_model", "google/gemini-2.5-flash"),
             document_model=settings.get("document_model", "google/gemini-2.5-flash"),

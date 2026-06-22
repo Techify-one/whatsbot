@@ -38,6 +38,7 @@ TECHIFY_PROVISION_MESSAGE = "Quero Criar conta e receber minha Chave de API"
 _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "OPENROUTER_API_KEY": ("openrouter_api_key", str),
     "WHATSBOT_MODEL": ("model", str),
+    "WHATSBOT_IMPROVEMENT_MODEL": ("improvement_model", str),
     "WHATSBOT_AUDIO_MODEL": ("audio_model", str),
     "WHATSBOT_IMAGE_MODEL": ("image_model", str),
     "WHATSBOT_DOCUMENT_MODEL": ("document_model", str),
@@ -58,6 +59,9 @@ _ENV_OVERRIDES_BY_KEY: dict[str, tuple[str, Callable[[str], Any]]] = {
 DEFAULT_CONFIG = {
     "openrouter_api_key": "",
     "model": "deepseek/deepseek-v4-pro",
+    # Model used by the "sugerir melhoria" analysis (non-agentic). Empty string
+    # → falls back to the chat ``model``.
+    "improvement_model": "",
     "audio_model": "google/gemini-2.5-flash",
     "image_model": "google/gemini-2.5-flash",
     "document_model": "google/gemini-2.5-flash",
