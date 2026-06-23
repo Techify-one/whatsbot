@@ -52,7 +52,12 @@ _RESERVED_TOOL_KWARGS = {
     "run_id", "session_id", "user_id",
 }
 
-_DEFAULT_MAX_TOKENS = 1024
+# Output cap. Kept high (not the model context window — just an upper bound on a
+# single reply) because input context is bounded elsewhere by
+# ``max_context_messages``. A low cap (was 1024) risked truncating long
+# split_messages JSON-array replies on reasoning models like deepseek-v4-pro,
+# where reasoning tokens count toward the completion budget.
+_DEFAULT_MAX_TOKENS = 8192
 
 
 @dataclass
