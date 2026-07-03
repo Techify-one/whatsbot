@@ -30,6 +30,53 @@ from plugins.events import (
 logger = logging.getLogger(__name__)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Guard anti-vazamento de tool-call cru (rede de segurança)
+# ──────────────────────────────────────────────────────────────────────────
+# Alguns modelos (ex.: deepseek via proxy) ocasionalmente emitem a sintaxe
+# interna de function-calling como TEXTO em vez de usar o campo estruturado
+# `tool_calls` — ex.: `<｜DSML｜tool_calls>...<｜DSML｜invoke name="...">...`.
+# O motor AGNO só lê o campo estruturado, então esse texto viraria a resposta
+# final e iria pro cliente (e pro histórico, fazendo o modelo "ver" o próprio
+# erro e repeti-lo). A causa raiz é do modelo/proxy; aqui só detectamos o
+# padrão e nunca deixamos vazar pro WhatsApp nem persistir no histórico.
+# ──────────────────────────────────────────────────────────────────────────
+
+# O separador entre "<" e a palavra-chave pode ser o pipe ASCII "|", o pipe de
+# largura-cheia "｜" (U+FF5C) e o "▁" (U+2581) que o DeepSeek usa nos seus
+# tokens especiais de function-calling (ex.: `<｜tool▁calls▁begin｜>`,
+# `<｜DSML｜tool_calls>`). A clínica só cobria o "|" ASCII e por isso NÃO pegava
+# o vazamento real (que vem em largura-cheia) — aqui cobrimos as três formas.
+_RAW_TOOL_CALL_RE = re.compile(
+    r"<\s*[|｜▁]?\s*[\w\-]{0,40}\s*[|｜▁]?\s*(tool[_▁]?calls?|invoke|function[_▁]?calls?)\b",
+    re.IGNORECASE,
+)
+_RAW_TOOL_CALL_MARKERS = (
+    # Formas ASCII
+    "<tool_call", "<|tool_calls|>", "[tool_calls]", "<|python_tag|>",
+    "<function=", "</invoke>", "</tool_call>", "</function_calls>",
+    # Formas de largura-cheia (DeepSeek/DSML) — "<｜" após "<" quase nunca é
+    # texto legítimo; é delimitador de token especial vazado.
+    "<｜", "｜tool", "｜invoke", "｜function", "｜python_tag", "tool▁calls",
+)
+
+
+def _looks_like_raw_tool_call(text: str) -> bool:
+    """Heurística: o texto parece sintaxe crua de tool-call vazada, não uma resposta real."""
+    if not text:
+        return False
+    if _RAW_TOOL_CALL_RE.search(text):
+        return True
+    lowered = text.lower()
+    return any(marker in lowered for marker in _RAW_TOOL_CALL_MARKERS)
+
+
+_FALLBACK_REPLY_APOS_VAZAMENTO = (
+    "Desculpa, tive um problema pra gerar a resposta agora. Pode repetir o "
+    "que você precisa?"
+)
+
+
 @dataclasses.dataclass
 class ProcessResult:
     """Result of process_message with optional tool call metadata."""
@@ -270,6 +317,24 @@ class AgentHandler:
         except Exception as e:
             logger.warning("Tool '%s' execution failed: %s", name, e)
             return None
+
+    def _sanitize_reply(self, sender: str, reply: str) -> str:
+        """Substitui a resposta por um fallback se ela parecer tool-call cru vazado.
+
+        Ver o comentário no topo do módulo (``_looks_like_raw_tool_call``) — isso
+        é o modelo/proxy gerando texto malformado, não algo que dá pra evitar na
+        origem. Aplicado ANTES de salvar no histórico e ANTES de enviar, pra não
+        persistir o erro como contexto de turnos futuros. Rede de segurança: o
+        motor AGNO já reduz muito esse vazamento (oferece tools em todo round),
+        mas não recupera DSML emitido como texto.
+        """
+        if _looks_like_raw_tool_call(reply):
+            logger.warning(
+                "Reply for %s parece tool-call cru vazado (model=%s) — suprimindo: %r",
+                sender, self.model, reply[:300],
+            )
+            return _FALLBACK_REPLY_APOS_VAZAMENTO
+        return reply
 
     def _record_usage(self, phone: str, call_type: str, model: str, response) -> None:
         """Extract usage from an OpenAI-compatible response and record it."""
@@ -1061,7 +1126,7 @@ class AgentHandler:
                 self, contact, sender, messages, active_tools,
                 model_config=model_config,
             )
-            reply = result.reply
+            reply = self._sanitize_reply(sender, result.reply)
             executed_tools = result.executed_tools
             usage_dict = result.usage
 
@@ -1191,7 +1256,7 @@ class AgentHandler:
                 self, contact, sender, messages, active_tools,
                 model_config=model_config,
             )
-            reply = result.reply
+            reply = self._sanitize_reply(sender, result.reply)
             executed_tools = result.executed_tools
             usage_dict = result.usage
 
