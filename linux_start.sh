@@ -1,13 +1,13 @@
 #!/bin/bash
-# WhatsBot — Linux native dev launcher (hot-reload).
+# WhatsBot — Linux native launcher.
 #
 # Equivalente do ``windows_start.bat --server`` no Windows: roda Python local
-# (sem Docker) com ``uvicorn --reload`` watchando core + plugins. Edita
-# qualquer ``.py`` em ``server/``, ``agent/``, ``config/``, ``gowa/``, ``db/``,
-# ``plugins/`` ou ``storages/plugins/`` e o worker reinicia sozinho.
+# (sem Docker) com ``uvicorn`` watchando core + plugins. Edita qualquer ``.py``
+# em ``server/``, ``agent/``, ``config/``, ``gowa/``, ``db/``, ``plugins/`` ou
+# ``storages/plugins/`` e o worker reinicia sozinho.
 #
-# O loop externo cobre quando o uvicorn parent morre (raro) ou um plugin
-# chama ``os._exit`` (enable/disable via UI dispara ``schedule_restart``).
+# O loop externo cobre quando o uvicorn morre (raro) ou um plugin chama
+# ``os._exit`` (enable/disable via UI dispara ``schedule_restart``).
 #
 # Pra rodar em modo Docker (prod-like) use ``./docker_start.sh``.
 set -u
@@ -16,6 +16,26 @@ set -u
 export WHATSBOT_WEB_PORT="${WHATSBOT_WEB_PORT:-8090}"
 # Porta interna do subprocess GOWA (não exposta).
 export WHATSBOT_GOWA_PORT="${WHATSBOT_GOWA_PORT:-64998}"
+
+# Hot-reload. Default 1 (dev). EM PRODUÇÃO rode com ``WHATSBOT_RELOAD=0``.
+#
+# Por quê: ``--reload`` faz o uvicorn subir DOIS processos — um pai (reloader,
+# dono do socket da porta) e um worker (que roda o app). O ``os._exit(0)`` que
+# ``plugins.restart.schedule_restart()`` dispara ao ativar/desativar um plugin
+# mata só o WORKER, e o pai NÃO recria worker que morreu sozinho: ele segue
+# vivo segurando a porta em LISTEN sem ninguém atendendo. Como o uvicorn nunca
+# "sai", nem o loop abaixo nem o ``Restart=always`` do systemd percebem —
+# ``systemctl status`` mostra ``active`` com o app morto, e só um restart
+# manual recupera.
+#
+# Além disso ``storages/plugins`` é um ``--reload-dir``: instalar um plugin
+# extrai o zip dentro dele, o watcher dispara e o worker é reiniciado NO MEIO
+# da requisição de upload, fazendo o import falhar.
+#
+# Com ``WHATSBOT_RELOAD=0`` o uvicorn é processo único: o ``os._exit(0)``
+# encerra o processo de verdade, o loop abaixo relança em ~2s, e escrever
+# arquivos em ``storages/plugins`` deixa de reiniciar nada.
+WHATSBOT_RELOAD="${WHATSBOT_RELOAD:-1}"
 
 cd "$(dirname "$0")"
 
@@ -100,19 +120,26 @@ sleep 1
 # storages/plugins ainda não existe (é criada em runtime por create_app).
 mkdir -p storages/plugins
 
+uvicorn_args=(--host 0.0.0.0 --port "$WHATSBOT_WEB_PORT" --log-level warning)
+if [ "$WHATSBOT_RELOAD" = "0" ]; then
+    mode_label="(sem hot-reload — produção)"
+else
+    mode_label="--reload"
+    uvicorn_args+=(
+        --reload
+        --reload-dir server
+        --reload-dir agent
+        --reload-dir config
+        --reload-dir gowa
+        --reload-dir db
+        --reload-dir plugins
+        --reload-dir storages/plugins
+    )
+fi
+
 while true; do
-    echo "[linux_start] $(date '+%H:%M:%S') starting uvicorn --reload (port $WHATSBOT_WEB_PORT)..."
-    ./venv/bin/python -m uvicorn server.dev:app \
-        --host 0.0.0.0 --port "$WHATSBOT_WEB_PORT" \
-        --reload \
-        --reload-dir server \
-        --reload-dir agent \
-        --reload-dir config \
-        --reload-dir gowa \
-        --reload-dir db \
-        --reload-dir plugins \
-        --reload-dir storages/plugins \
-        --log-level warning
+    echo "[linux_start] $(date '+%H:%M:%S') starting uvicorn $mode_label (port $WHATSBOT_WEB_PORT)..."
+    ./venv/bin/python -m uvicorn server.dev:app "${uvicorn_args[@]}"
     rc=$?
     echo "[linux_start] $(date '+%H:%M:%S') uvicorn exited rc=$rc"
     # Mata GOWA orphan antes de relançar (senão a porta fica presa)
