@@ -15,8 +15,10 @@ set -u
 # ===== Porta web (frontend + REST + WS). Sobrescrevível externamente. =====
 WEB_PORT="${WHATSBOT_WEB_PORT:-8080}"
 
-# Versão do GOWA que casa com o cliente em gowa/client.py e o Dockerfile.
-GOWA_VERSION="${GOWA_VERSION:-8.8.0}"
+# Versao do GOWA. Fonte unica: o arquivo GOWA_VERSION na raiz do repo, o mesmo
+# lido pelo Dockerfile e por gowa/binary.py. Resolvido antes do cd, entao usa
+# dirname "$0". Override por env se precisar.
+GOWA_VERSION="${GOWA_VERSION:-$(cat "$(dirname "$0")/GOWA_VERSION" 2>/dev/null || echo 8.8.0)}"
 # Versão do Python instalada automaticamente quando nenhuma 3.11+ é encontrada.
 PY_VERSION="${PY_VERSION:-3.12.8}"
 
@@ -140,7 +142,9 @@ echo "[OK] pip disponivel."
 
 # ===== 3. VERIFICAR / BAIXAR O BINARIO GOWA (macOS) =====
 # .gitignore exclui bin/gowa — cada Mac baixa a release oficial na 1a execucao.
-if [ ! -x ./bin/gowa ]; then
+# bin/.gowa_stamp registra a versao baixada: se um git pull bumpar GOWA_VERSION,
+# o stamp diverge e o binario e re-baixado.
+if [ ! -x ./bin/gowa ] || [ "$(cat bin/.gowa_stamp 2>/dev/null)" != "$GOWA_VERSION" ]; then
     case "$(uname -m)" in
         arm64)         GOWA_ARCH="arm64" ;;
         x86_64|amd64)  GOWA_ARCH="amd64" ;;
@@ -179,8 +183,9 @@ if [ ! -x ./bin/gowa ]; then
     # Remove a quarentena do Gatekeeper (binario baixado da internet seria
     # bloqueado por "developer cannot be verified").
     xattr -dr com.apple.quarantine ./bin/gowa 2>/dev/null || true
+    echo "$GOWA_VERSION" > ./bin/.gowa_stamp
     rm -rf "$tmpdir"
-    echo "[OK] GOWA pronto em ./bin/gowa"
+    echo "[OK] GOWA v${GOWA_VERSION} pronto em ./bin/gowa"
 else
     echo "[OK] gowa encontrado."
 fi

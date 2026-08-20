@@ -12,9 +12,10 @@ import { PluginScreen } from './components/PluginScreen.js';
 import { ToolsManager } from './components/ToolsManager.js';
 import { SetupWizard } from './components/SetupWizard.js';
 import { LowBalanceModal } from './components/LowBalanceModal.js';
+import { GowaUpdateModal } from './components/GowaUpdateModal.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
-import { checkAuth, authHeaders, getUnreadCount } from './services/api.js';
+import { checkAuth, authHeaders, getUnreadCount, installGowaUpdate, skipGowaVersion } from './services/api.js';
 import { playTransferAlert } from './utils/alertSound.js';
 import { getNotifPref, playNotificationSound, showBrowserNotification } from './utils/notifications.js';
 
@@ -30,6 +31,21 @@ function lowBalanceIsSnoozed() {
 function snoozeLowBalance(ms) {
   try {
     localStorage.setItem(LOW_BALANCE_SNOOZE_KEY, String(Date.now() + ms));
+  } catch {}
+}
+
+const GOWA_UPDATE_SNOOZE_KEY = 'whatsbot_gowa_update_snoozed_until';
+
+function gowaUpdateIsSnoozed() {
+  try {
+    const v = parseInt(localStorage.getItem(GOWA_UPDATE_SNOOZE_KEY) || '0', 10);
+    return v && Date.now() < v;
+  } catch { return false; }
+}
+
+function snoozeGowaUpdate(ms) {
+  try {
+    localStorage.setItem(GOWA_UPDATE_SNOOZE_KEY, String(Date.now() + ms));
   } catch {}
 }
 
@@ -256,6 +272,9 @@ function App({ onLogout, hasPassword }) {
   const [avatarUpdated, setAvatarUpdated] = useState(null);
   const [groupParticipantsChanged, setGroupParticipantsChanged] = useState(null);
   const [lowBalance, setLowBalance] = useState(null);
+  const [gowaUpdate, setGowaUpdate] = useState(null);
+  const [gowaProgress, setGowaProgress] = useState(null);
+  const [gowaInstalling, setGowaInstalling] = useState(false);
   const [initialContactId, setInitialContactId] = useState(contactIdFromPath);
   const [wizardManual, setWizardManual] = useState(() => window.location.pathname === '/wizard');
   const wizardLatchRef = useRef(false);
@@ -359,6 +378,17 @@ function App({ onLogout, hasPassword }) {
       if (lowBalanceIsSnoozed()) return;
       setLowBalance(data);
     }, []),
+    onGowaUpdateAvailable: useCallback((data) => {
+      if (gowaUpdateIsSnoozed()) return;
+      setGowaUpdate(data);
+    }, []),
+    onGowaUpdateProgress: useCallback((data) => setGowaProgress(data), []),
+    onGowaUpdateDone: useCallback((data) => {
+      setGowaInstalling(false);
+      setGowaProgress(null);
+      setNotification(data && data.message ? data.message : '');
+      if (data && data.ok) setGowaUpdate(null);
+    }, []),
     onWsConnect: useCallback(() => setWsConnected(true), []),
     onWsDisconnect: useCallback(() => setWsConnected(false), []),
   });
@@ -384,6 +414,51 @@ function App({ onLogout, hasPassword }) {
       })
       .catch(() => { /* ignore */ });
   }, [config && config.openrouter_api_key]);
+
+  // One-shot GOWA update check on boot. The daily background task broadcasts
+  // over WS, but a panel opened between two checks would otherwise never learn
+  // about a release that is already out.
+  useEffect(() => {
+    if (gowaUpdateIsSnoozed()) return;
+    fetch('/api/gowa/update/check', { headers: authHeaders() })
+      .then(r => r.json())
+      .then(res => {
+        const d = res && res.ok && res.data;
+        if (!d || !d.update_available || !d.latest_supported) return;
+        if (d.latest_version && d.latest_version === d.skipped_version) return;
+        setGowaUpdate({
+          latest_version: d.latest_version,
+          installed_version: d.installed_version,
+          supported: d.latest_supported,
+          release_url: d.release_url,
+        });
+      })
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  const handleGowaUpdateNow = useCallback(async (forceUnsupported) => {
+    if (!gowaUpdate) return;
+    setGowaInstalling(true);
+    setGowaProgress({ phase: 'downloading', progress: 0 });
+    try {
+      const res = await installGowaUpdate(gowaUpdate.latest_version, forceUnsupported);
+      if (!res || !res.ok) {
+        setNotification((res && res.error) || 'Falha ao atualizar o GOWA.');
+      }
+    } catch (e) {
+      setNotification('Falha ao atualizar o GOWA.');
+    } finally {
+      // gowa_update_done normally clears these; this is the safety net for a
+      // request that never got a broadcast (e.g. the connection dropped).
+      setGowaInstalling(false);
+      setGowaProgress(null);
+    }
+  }, [gowaUpdate]);
+
+  const handleGowaSkip = useCallback(async (version) => {
+    setGowaUpdate(null);
+    try { await skipGowaVersion(version); } catch { /* ignore */ }
+  }, []);
 
   // ── Browser-tab unread badge ("(3) WhatsBot"), like WhatsApp Web ──────────
   // Single source of truth is the backend count; we refresh it (debounced) on
@@ -559,6 +634,18 @@ function App({ onLogout, hasPassword }) {
         accountUrl=${lowBalance.account_url || (config && config.account_url)}
         onClose=${() => setLowBalance(null)}
         onSnooze=${(ms) => snoozeLowBalance(ms)}
+      />` : null}
+
+      ${gowaUpdate ? html`<${GowaUpdateModal}
+        latestVersion=${gowaUpdate.latest_version}
+        installedVersion=${gowaUpdate.installed_version}
+        supported=${gowaUpdate.supported !== false}
+        releaseUrl=${gowaUpdate.release_url}
+        installing=${gowaInstalling}
+        progress=${gowaProgress}
+        onUpdateNow=${handleGowaUpdateNow}
+        onLater=${() => { snoozeGowaUpdate(24 * 60 * 60 * 1000); setGowaUpdate(null); }}
+        onSkip=${handleGowaSkip}
       />` : null}
     </div>
   `;

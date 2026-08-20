@@ -39,8 +39,9 @@ WHATSBOT_RELOAD="${WHATSBOT_RELOAD:-1}"
 
 cd "$(dirname "$0")"
 
-# Versão do GOWA que casa com o cliente em gowa/client.py e o Dockerfile.
-GOWA_VERSION="${GOWA_VERSION:-8.8.0}"
+# Versão do GOWA. Fonte única: o arquivo GOWA_VERSION na raiz do repo, o mesmo
+# lido pelo Dockerfile e por gowa/binary.py. Override por env se precisar.
+GOWA_VERSION="${GOWA_VERSION:-$(cat ./GOWA_VERSION 2>/dev/null || echo 8.8.0)}"
 
 require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -62,7 +63,11 @@ echo "[linux_start] sincronizando dependências (pip install -r requirements.txt
 # Equivalente ao Dockerfile: baixa a release oficial do go-whatsapp-web-multidevice
 # se o binário local não existir. .gitignore exclui bin/gowa — cada máquina
 # baixa o seu na 1ª execução.
-if [ ! -x ./bin/gowa ]; then
+#
+# ``bin/.gowa_stamp`` registra qual versão foi baixada. Quando um ``git pull``
+# bumpa GOWA_VERSION, o stamp diverge e o binário é re-baixado. Sem isso, uma
+# máquina de dev ficaria presa na versão da primeira execução para sempre.
+if [ ! -x ./bin/gowa ] || [ "$(cat bin/.gowa_stamp 2>/dev/null)" != "$GOWA_VERSION" ]; then
     require_cmd curl  || exit 1
     require_cmd unzip || exit 1
     case "$(uname -m)" in
@@ -87,9 +92,10 @@ if [ ! -x ./bin/gowa ]; then
     fi
     cp "$tmpdir/extract/linux-${TARGETARCH}" ./bin/gowa
     chmod +x ./bin/gowa
+    echo "$GOWA_VERSION" > ./bin/.gowa_stamp
     rm -rf "$tmpdir"
     trap - EXIT
-    echo "[linux_start] GOWA pronto em ./bin/gowa"
+    echo "[linux_start] GOWA v${GOWA_VERSION} pronto em ./bin/gowa"
 fi
 
 # Libera as portas que vamos usar — equivalente ao taskkill do

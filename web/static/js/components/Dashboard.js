@@ -3,12 +3,14 @@ import { useState, useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { ConnectionStatus, QRCodeModal } from './QRCode.js';
 import { ConfigPanel } from './ConfigPanel.js';
+import { getGowaVersion } from '../services/api.js';
 
 const html = htm.bind(h);
 
 export function Dashboard({ status, qrAvailable, qrVersion, config, saving, onSave, onNotify, onReopenSetup }) {
   const connected = status?.connected || false;
   const [showQR, setShowQR] = useState(!connected);
+  const [gowaVersion, setGowaVersion] = useState('');
   const userDismissedQR = useRef(false);
   const prevConnected = useRef(connected);
 
@@ -33,6 +35,16 @@ export function Dashboard({ status, qrAvailable, qrVersion, config, saving, onSa
     }
   }, []);
 
+  // Version chip next to the connection status, so the GOWA version is visible
+  // at the top of /painel without scrolling down to the GOWA card.
+  useEffect(() => {
+    let alive = true;
+    getGowaVersion()
+      .then(res => { if (alive && res && res.ok) setGowaVersion(res.data.installed_version || ''); })
+      .catch(() => { /* ignore */ });
+    return () => { alive = false; };
+  }, []);
+
   function handleCloseQR() {
     userDismissedQR.current = true;
     setShowQR(false);
@@ -44,6 +56,7 @@ export function Dashboard({ status, qrAvailable, qrVersion, config, saving, onSa
         connected=${connected}
         botPhone=${status?.bot_phone || ''}
         botName=${status?.bot_name || ''}
+        gowaVersion=${gowaVersion}
         onOpenQR=${() => setShowQR(true)}
       />
 

@@ -16,7 +16,7 @@ export function formatPhone(phone) {
   return `+${phone}`;
 }
 
-export function ConnectionStatus({ connected, botPhone, botName, onOpenQR }) {
+export function ConnectionStatus({ connected, botPhone, botName, gowaVersion, onOpenQR }) {
   const [copied, setCopied] = useState(false);
 
   function handleCopyLink() {
@@ -39,6 +39,12 @@ export function ConnectionStatus({ connected, botPhone, botName, onOpenQR }) {
           ${connected && botName ? html`
             <span class="text-wa-secondary">·</span>
             <span class="text-wa-text font-medium">${botName}</span>
+          ` : null}
+          ${gowaVersion ? html`
+            <span class="text-wa-secondary">·</span>
+            <span class="text-wa-secondary text-xs font-mono" title="Versão do GOWA, o motor do WhatsApp">
+              GOWA v${gowaVersion}
+            </span>
           ` : null}
           ${connected && botPhone ? html`
             <span class="text-wa-secondary text-xs">${formatPhone(botPhone)}</span>

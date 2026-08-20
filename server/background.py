@@ -7,11 +7,17 @@ from pathlib import Path
 
 from db.repositories import contact_repo
 from agent import group_mentions
+from gowa import updater as gowa_updater
 from plugins.events import emit as emit_event, emit_with_filter
 from server.avatars import refresh_and_broadcast
 
 # How often the background sweep re-checks every contact's avatar for changes.
 AVATAR_REFRESH_INTERVAL = 1800  # seconds (30 min)
+
+# How often we ask GitHub whether a newer GOWA was released, and how long we
+# wait after boot before the first check (lets GOWA and the panel settle).
+GOWA_UPDATE_CHECK_INTERVAL = 86400  # seconds (24h)
+GOWA_UPDATE_CHECK_DELAY = 120       # seconds
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +235,56 @@ async def avatar_fetch_task(deps):
         while slept < AVATAR_REFRESH_INTERVAL and not state.stop_event.is_set():
             await asyncio.sleep(3)
             slept += 3
+
+
+async def gowa_update_check_loop(deps):
+    """Check once a day whether a newer GOWA was released.
+
+    Only notifies: installing always requires the user to approve. Versions
+    outside the supported range are deliberately NOT broadcast (they show up
+    flagged in the GOWA settings card instead), so we never push the user
+    towards a build that could break the integration.
+    """
+    settings = deps.settings
+    ws_manager = deps.ws_manager
+    state = deps.state
+
+    async def _sleep(total: int) -> bool:
+        """Sleep in slices so shutdown stays responsive. False = stop."""
+        slept = 0
+        while slept < total:
+            if state.stop_event.is_set():
+                return False
+            await asyncio.sleep(3)
+            slept += 3
+        return not state.stop_event.is_set()
+
+    if not await _sleep(GOWA_UPDATE_CHECK_DELAY):
+        return
+
+    while not state.stop_event.is_set():
+        try:
+            if settings.get("gowa_auto_check_enabled", True):
+                result = await asyncio.to_thread(gowa_updater.check, settings, True)
+                latest = result.get("latest_version", "")
+                skipped = settings.get("gowa_skipped_version", "")
+                if (
+                    result.get("update_available")
+                    and result.get("latest_supported")
+                    and latest
+                    and latest != skipped
+                ):
+                    logger.info("New GOWA release available: %s", latest)
+                    await ws_manager.broadcast("gowa_update_available", {
+                        "latest_version": latest,
+                        "installed_version": result.get("installed_version", ""),
+                        "supported": True,
+                        "release_url": result.get("release_url", ""),
+                        "release_notes": result.get("release_notes", ""),
+                        "published_at": result.get("published_at", ""),
+                    })
+        except Exception as e:
+            logger.debug("GOWA update check failed: %s", e)
+
+        if not await _sleep(GOWA_UPDATE_CHECK_INTERVAL):
+            return

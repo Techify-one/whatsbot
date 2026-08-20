@@ -7,6 +7,14 @@ export function avatarUrl(phone, v) {
   return v ? `${base}?v=${v}` : base;
 }
 
+// ── Phone formatting ─────────────────────────────────────────────
+
+// 5585973605591 → +55 (85) 97360-5591
+export function formatPhoneDisplay(phone) {
+  if (!phone || phone.length < 12) return phone;
+  return `+${phone.slice(0, 2)} (${phone.slice(2, 4)}) ${phone.slice(4, 9)}-${phone.slice(9)}`;
+}
+
 // ── Time formatting ──────────────────────────────────────────────
 
 export function formatTime(ts) {

@@ -28,6 +28,10 @@ build/
 
 # Linux GOWA binary (baixado/buildado localmente por dev; não trackeado)
 bin/gowa
+# Stamp da versão do GOWA em bin/ (escrito em runtime pelos launchers e pelo
+# Dockerfile). Trackear isso criaria uma fonte de verdade conflitante entre
+# máquinas. A fonte única é o arquivo GOWA_VERSION.
+bin/.gowa_stamp
 
 # Docker persistent data
 data/

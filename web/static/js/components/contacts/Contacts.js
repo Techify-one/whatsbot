@@ -6,6 +6,8 @@ import { ContactList } from './ContactList.js';
 import { ContactDetail } from './ContactDetail.js';
 import { ContactInfoPanel } from './ContactInfoPanel.js';
 import { ContextMenu } from './ContextMenu.js';
+import { StartChatWarningModal } from './StartChatWarningModal.js';
+import { formatPhoneDisplay } from './utils.js';
 
 const html = htm.bind(h);
 
@@ -29,6 +31,7 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
   const [globalTags, setGlobalTags] = useState({});
   const [checkingPhone, setCheckingPhone] = useState(false);
   const [checkPhoneError, setCheckPhoneError] = useState(null);
+  const [startChatPhone, setStartChatPhone] = useState(null);  // pending 'start conversation' confirmation
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPhones, setSelectedPhones] = useState([]);
   const pendingWsMessages = useRef({});
@@ -295,8 +298,18 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
     });
   }, []);
 
-  const handleStartConversation = useCallback(async (normalizedPhone) => {
+  // Clicking "start conversation" no longer opens the chat right away: starting
+  // a chat from an unofficial API is what most often gets a number banned, so we
+  // warn first and offer to send the wa.me link to the operator's own phone.
+  const handleStartConversation = useCallback((normalizedPhone) => {
     if (!normalizedPhone || checkingPhone) return;
+    setCheckPhoneError(null);
+    setStartChatPhone(normalizedPhone);
+  }, [checkingPhone]);
+
+  const confirmStartConversation = useCallback(async (normalizedPhone) => {
+    if (!normalizedPhone || checkingPhone) return;
+    setStartChatPhone(null);
 
     setCheckingPhone(true);
     setCheckPhoneError(null);
@@ -867,6 +880,14 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
           onDelete=${handleDelete}
           onCreateTag=${handleCreateTag}
           onClose=${() => setCtxMenu(null)}
+        />
+      ` : null}
+      ${startChatPhone ? html`
+        <${StartChatWarningModal}
+          phone=${startChatPhone}
+          phoneDisplay=${formatPhoneDisplay(startChatPhone)}
+          onConfirm=${() => confirmStartConversation(startChatPhone)}
+          onClose=${() => setStartChatPhone(null)}
         />
       ` : null}
     </div>

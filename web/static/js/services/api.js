@@ -285,6 +285,12 @@ export async function checkPhone(phone) {
   return request('POST', '/api/contacts/check-phone', { phone });
 }
 
+// Sends a wa.me link for `phone` to the connected account's own chat, so the
+// operator can start the conversation from the official app instead of here.
+export async function sendSelfLink(phone) {
+  return request('POST', '/api/contacts/send-self-link', { phone });
+}
+
 // ── Tags ─────────────────────────────────────────────────────────────
 
 export async function getTags() {
@@ -359,6 +365,43 @@ export async function checkForUpdates() {
 
 export async function performUpdate() {
   return request('POST', '/api/update');
+}
+
+// ── GOWA (motor do WhatsApp) ──────────────────────────────────────
+
+export async function getGowaVersion() {
+  return request('GET', '/api/gowa/version');
+}
+
+export async function checkGowaUpdate(force = false) {
+  return request('GET', `/api/gowa/update/check${force ? '?force=true' : ''}`);
+}
+
+export async function installGowaUpdate(version, forceUnsupported = false) {
+  return request('POST', '/api/gowa/update', {
+    version: version || '',
+    force_unsupported: !!forceUnsupported,
+  });
+}
+
+export async function rollbackGowa() {
+  return request('POST', '/api/gowa/rollback');
+}
+
+export async function getGowaProxy() {
+  return request('GET', '/api/gowa/proxy');
+}
+
+export async function saveGowaProxy(payload) {
+  return request('PUT', '/api/gowa/proxy', payload);
+}
+
+export async function testGowaProxy(payload) {
+  return request('POST', '/api/gowa/proxy/test', payload);
+}
+
+export async function skipGowaVersion(version) {
+  return request('POST', '/api/gowa/skip-version', { version });
 }
 
 // ── Auth ──────────────────────────────────────────────────────────

@@ -174,6 +174,20 @@ class GOWAClient:
         result = self._request("GET", "/devices", skip_device_header=True)
         return result is not None
 
+    def get_app_info(self) -> dict | None:
+        """Server metadata, including the GOWA version.
+
+        ``/app/info`` only exists from GOWA 9.0.0 onwards; on 8.x it 404s and
+        this returns ``None``. Used by the updater to confirm which version is
+        actually running after an install.
+        """
+        result = self._request("GET", "/app/info", skip_device_header=True)
+        if result and isinstance(result, dict):
+            results = result.get("results")
+            if isinstance(results, dict):
+                return results
+        return None
+
     def get_status(self) -> dict | None:
         """Get WhatsApp connection status."""
         if not self._device_ready:

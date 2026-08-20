@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -375,6 +376,30 @@ _reply_cid = contact_repo.get_full_contact("5511999990001")["id"]
 _last = message_repo.get_last(_reply_cid)
 check("POST /send (reply_to) -> persisted reply_to_msg_id",
       _last.get("reply_to_msg_id") == "WAMID_QUOTE_1")
+
+# ═══════════════════════════════════════════════════════════════════
+#  7a. Send wa.me link to the connected account's own chat
+# ═══════════════════════════════════════════════════════════════════
+section("Contacts — Send Self Link")
+
+mock_gowa_client.send_message.reset_mock()
+r = client.post("/api/contacts/send-self-link", json={"phone": "85973605591"})
+check("POST /send-self-link -> 200", r.status_code == 200)
+_sl = r.json().get("data") or {}
+check("POST /send-self-link -> wa.me link",
+      _sl.get("link") == "https://wa.me/5585973605591", _sl.get("link"))
+check("POST /send-self-link -> own phone", _sl.get("own_phone") == "5511999990001")
+_args, _kwargs = mock_gowa_client.send_message.call_args
+check("POST /send-self-link -> sent to own number",
+      "5511999990001" in (list(_args) + list(_kwargs.values())))
+check("POST /send-self-link -> link in message text",
+      any("https://wa.me/5585973605591" in str(a) for a in (list(_args) + list(_kwargs.values()))))
+_self_contact = contact_repo.get_full_contact("5511999990001")
+check("POST /send-self-link -> saved on own chat",
+      "https://wa.me/5585973605591" in (message_repo.get_last(_self_contact["id"]) or {}).get("content", ""))
+
+r = client.post("/api/contacts/send-self-link", json={"phone": "123"})
+check("POST /send-self-link (invalid) -> 400", r.status_code == 400)
 
 # ═══════════════════════════════════════════════════════════════════
 #  8. Contact retry send
@@ -855,7 +880,197 @@ for path in ["/", "/painel", "/sandbox", "/costs"]:
     check(f"GET {path} -> 200", r.status_code == 200)
 
 # ═══════════════════════════════════════════════════════════════════
-#  23. Auth with password
+#  23. GOWA version / update
+# ═══════════════════════════════════════════════════════════════════
+section("GOWA — Version & Update")
+
+from gowa import binary as _gowa_binary  # noqa: E402
+from gowa import updater as _gowa_updater  # noqa: E402
+
+# Sandbox the binary resolution: without this, POST /gowa/rollback below would
+# uninstall the GOWA the developer actually has in storages/bin.
+_gowa_fake_root = Path(tempfile.mkdtemp(prefix="whatsbot_test_gowa_"))
+(_gowa_fake_root / "bin").mkdir()
+(_gowa_fake_root / "storages").mkdir()
+(_gowa_fake_root / "GOWA_VERSION").write_text("8.8.0\n")
+_fake_binary = _gowa_fake_root / "bin" / _gowa_binary.binary_name()
+_fake_binary.write_bytes(b"#!/bin/sh\nexit 0\n")
+_fake_binary.chmod(0o755)
+_orig_repo_root = _gowa_binary.repo_root
+_gowa_binary.repo_root = lambda: _gowa_fake_root
+
+# Never hit GitHub from the tests: stub the release lookup.
+_FAKE_RELEASE = {
+    "version": "9.1.0",
+    "published_at": "2026-08-15T19:35:00Z",
+    "notes": "fake",
+    "url": "https://example.invalid/release",
+    "cached": False,
+    "rate_limited": False,
+}
+_orig_fetch = _gowa_updater.fetch_latest_release
+_gowa_updater.fetch_latest_release = lambda force=False: dict(_FAKE_RELEASE)
+
+r = client.get("/api/gowa/version")
+check("GET /gowa/version -> 200", r.status_code == 200)
+_gv = r.json().get("data", {})
+check("GET /gowa/version -> installed_version", bool(_gv.get("installed_version")))
+check("GET /gowa/version -> source", _gv.get("source") in ("bundled", "managed", "env"))
+check("GET /gowa/version -> supported_range", _gv.get("supported_range") == _gowa_updater.GOWA_SUPPORTED_RANGE)
+
+r = client.get("/api/gowa/update/check")
+check("GET /gowa/update/check -> 200", r.status_code == 200)
+_gc = r.json().get("data", {})
+check("GET /gowa/update/check -> latest_version", _gc.get("latest_version") == "9.1.0")
+check("GET /gowa/update/check -> update_available", _gc.get("update_available") is True)
+check("GET /gowa/update/check -> latest_supported", _gc.get("latest_supported") is True)
+
+# Out-of-range version must ask for confirmation instead of installing.
+r = client.post("/api/gowa/update", json={"version": "10.5.0"})
+check("POST /gowa/update (unsupported) -> 200", r.status_code == 200)
+_gu = r.json().get("data", {})
+check("POST /gowa/update (unsupported) -> requires_confirmation",
+      _gu.get("requires_confirmation") is True)
+
+# A malformed version must never reach the download URL builder.
+r = client.post("/api/gowa/update", json={"version": "../../etc/passwd"})
+check("POST /gowa/update (versão inválida) -> 400", r.status_code == 400)
+
+# Rollback with nothing to restore.
+r = client.post("/api/gowa/rollback")
+check("POST /gowa/rollback (sem backup) -> 400", r.status_code == 400)
+
+r = client.post("/api/gowa/skip-version", json={"version": "9.1.0"})
+check("POST /gowa/skip-version -> 200", r.status_code == 200)
+check("POST /gowa/skip-version -> persisted",
+      client.get("/api/config").json()["data"].get("gowa_skipped_version") == "9.1.0")
+
+r = client.post("/api/gowa/skip-version", json={"version": ""})
+check("POST /gowa/skip-version (vazio) -> 400", r.status_code == 400)
+
+# The auto-check toggle must survive PUT /api/config (allowlist regression).
+client.put("/api/config", json={"gowa_auto_check_enabled": False})
+check("PUT /config gowa_auto_check_enabled -> persisted",
+      client.get("/api/config").json()["data"].get("gowa_auto_check_enabled") is False)
+client.put("/api/config", json={"gowa_auto_check_enabled": True})
+
+_gowa_updater.fetch_latest_release = _orig_fetch
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  24. GOWA proxy
+# ═══════════════════════════════════════════════════════════════════
+section("GOWA — Proxy")
+
+import socket as _socket  # noqa: E402
+import threading as _threading  # noqa: E402
+
+r = client.get("/api/gowa/proxy")
+check("GET /gowa/proxy -> 200", r.status_code == 200)
+_pp = r.json().get("data", {})
+check("GET /gowa/proxy -> desativado por padrão", _pp.get("enabled") is False)
+check("GET /gowa/proxy -> min_version", _pp.get("min_version") == "8.11.0")
+check("GET /gowa/proxy -> schemes", "socks5" in (_pp.get("schemes") or []))
+check("GET /gowa/proxy -> GOWA 8.8.0 não suporta proxy", _pp.get("supported") is False)
+
+# Config inválida não é salva.
+r = client.put("/api/gowa/proxy", json={"enabled": True, "mode": "fields", "host": ""})
+check("PUT /gowa/proxy (host vazio) -> 400", r.status_code == 400)
+r = client.put("/api/gowa/proxy", json={"enabled": True, "mode": "url", "url": "1.2.3.4:1080"})
+check("PUT /gowa/proxy (URL sem esquema) -> 400", r.status_code == 400)
+
+mock_gowa_manager.restart.reset_mock()
+r = client.put("/api/gowa/proxy", json={
+    "enabled": True, "mode": "fields", "scheme": "socks5",
+    "host": "10.0.0.9", "port": 1080, "username": "user", "password": "segredo",
+})
+check("PUT /gowa/proxy -> 200", r.status_code == 200)
+_pp = r.json().get("data", {})
+check("PUT /gowa/proxy -> salvo", _pp.get("enabled") is True and _pp.get("host") == "10.0.0.9")
+check("PUT /gowa/proxy -> senha nunca volta em claro", _pp.get("password") == "***")
+check("PUT /gowa/proxy -> has_password", _pp.get("has_password") is True)
+check("PUT /gowa/proxy -> URL efetiva mascarada",
+      _pp.get("effective_url") == "socks5://user:***@10.0.0.9:1080", str(_pp.get("effective_url")))
+check("PUT /gowa/proxy -> reiniciou o GOWA", mock_gowa_manager.restart.called)
+
+from gowa import proxy as _gowa_proxy  # noqa: E402
+
+check("proxy aplicado ao subprocesso",
+      _gowa_proxy.current_url() == "socks5://user:segredo@10.0.0.9:1080", _gowa_proxy.current_url())
+
+# Reenviar a senha mascarada preserva a senha salva e não reinicia à toa.
+mock_gowa_manager.restart.reset_mock()
+r = client.put("/api/gowa/proxy", json={
+    "enabled": True, "mode": "fields", "scheme": "socks5",
+    "host": "10.0.0.9", "port": 1080, "username": "user", "password": "***",
+})
+check("PUT /gowa/proxy (senha mascarada) -> senha preservada",
+      _gowa_proxy.current_url() == "socks5://user:segredo@10.0.0.9:1080", _gowa_proxy.current_url())
+check("PUT /gowa/proxy sem mudança -> não reinicia", not mock_gowa_manager.restart.called)
+
+# Teste de conectividade contra um SOCKS5 falso local.
+def _fake_socks5():
+    srv = _socket.socket()
+    srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(2)
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            return
+        try:
+            conn.settimeout(5)
+            _, count = conn.recv(2)
+            conn.recv(count)
+            conn.sendall(b"\x05\x00")
+            head = conn.recv(4)
+            if head and head[3] == 0x03:
+                length = conn.recv(1)[0]
+                conn.recv(length + 2)
+            conn.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    _threading.Thread(target=serve, daemon=True).start()
+    return srv, srv.getsockname()[1]
+
+
+_srv, _port = _fake_socks5()
+r = client.post("/api/gowa/proxy/test", json={
+    "enabled": True, "mode": "fields", "scheme": "socks5",
+    "host": "127.0.0.1", "port": _port, "username": "", "password": "",
+})
+check("POST /gowa/proxy/test -> 200", r.status_code == 200)
+_pt = r.json().get("data", {})
+check("POST /gowa/proxy/test -> ok", _pt.get("ok") is True, str(_pt.get("message")))
+_srv.close()
+
+r = client.post("/api/gowa/proxy/test", json={"enabled": True, "mode": "url", "url": "ftp://x:1"})
+check("POST /gowa/proxy/test (URL inválida) -> 400", r.status_code == 400)
+
+# Desativar limpa o proxy do subprocesso.
+mock_gowa_manager.restart.reset_mock()
+r = client.put("/api/gowa/proxy", json={"enabled": False})
+check("PUT /gowa/proxy (desativar) -> 200", r.status_code == 200)
+check("desativado -> sem proxy no subprocesso", _gowa_proxy.current_url() == "",
+      _gowa_proxy.current_url())
+check("desativar reinicia o GOWA", mock_gowa_manager.restart.called)
+
+# As chaves do proxy não são graváveis pelo PUT /api/config genérico.
+client.put("/api/config", json={"gowa_proxy_enabled": True, "gowa_proxy_host": "6.6.6.6"})
+check("PUT /config não escreve config de proxy",
+      client.get("/api/gowa/proxy").json()["data"].get("enabled") is False)
+
+_gowa_binary.repo_root = _orig_repo_root
+shutil.rmtree(_gowa_fake_root, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  25. Auth with password
 # ═══════════════════════════════════════════════════════════════════
 section("Auth — With Password")
 

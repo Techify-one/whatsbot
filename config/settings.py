@@ -49,6 +49,7 @@ _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {
     "WHATSBOT_MAX_CONTEXT": ("max_context_messages", int),
     "WHATSBOT_BATCH_DELAY": ("message_batch_delay", float),
     "WHATSBOT_AI_ENGINE": ("ai_engine_enabled", lambda v: v.lower() in ("1", "true", "yes")),
+    "WHATSBOT_GOWA_AUTO_CHECK": ("gowa_auto_check_enabled", lambda v: v.lower() in ("1", "true", "yes")),
 }
 
 # Reverse lookup: config_key -> (env_key, cast). Used by get() to apply env overrides on-demand.
@@ -111,6 +112,29 @@ DEFAULT_CONFIG = {
     # opens a modal pointing to ``account_url`` for the user to recharge.
     "low_balance_enabled": True,
     "low_balance_threshold": 0.50,
+    # --- Atualização do binário GOWA ----------------------------------------
+    # ``gowa_auto_check_enabled`` liga APENAS a verificação diária de novas
+    # releases; a instalação sempre exige aprovação explícita do usuário.
+    # ``gowa_skipped_version`` guarda a versão que o usuário mandou pular (não
+    # avisa mais nela, mas volta a avisar na próxima). As duas últimas são
+    # escritas pelo servidor para o cache sobreviver a um restart.
+    "gowa_auto_check_enabled": True,
+    "gowa_skipped_version": "",
+    "gowa_latest_version": "",
+    "gowa_last_check_at": 0.0,
+    # --- Proxy de saída do GOWA ---------------------------------------------
+    # Roteia a conexão do WhatsApp (WebSocket do whatsmeow) por um proxy.
+    # Requer GOWA >= 8.11.0. ``gowa_proxy_mode`` escolhe entre preencher os
+    # campos separados ("fields") ou colar uma URL única ("url"). Detalhes e
+    # validação em gowa/proxy.py; escritas passam por /api/gowa/proxy.
+    "gowa_proxy_enabled": False,
+    "gowa_proxy_mode": "fields",
+    "gowa_proxy_scheme": "socks5",
+    "gowa_proxy_host": "",
+    "gowa_proxy_port": 0,
+    "gowa_proxy_username": "",
+    "gowa_proxy_password": "",
+    "gowa_proxy_url": "",
 }
 
 

@@ -95,6 +95,63 @@ def register_routes(app, deps):
             "name": name,
         })
 
+    @app.post("/api/contacts/send-self-link")
+    async def send_self_link(request: Request):
+        """Send a wa.me link for `phone` to the connected account's own chat.
+
+        Used by the "start conversation" warning: instead of opening the chat
+        from here (unofficial API, risk of ban), the operator gets the link on
+        their own phone and starts the conversation from the official app.
+        """
+        body = await request.json()
+        phone = (body.get("phone") or "").strip()
+        digits = "".join(c for c in phone if c.isdigit())
+        if len(digits) < 10:
+            return _err("Número inválido. Informe DDD + número.")
+        if not digits.startswith("55"):
+            digits = "55" + digits
+
+        own = (await asyncio.to_thread(gowa_client.get_own_number) or "").strip()
+        if not own:
+            return _err("Não foi possível identificar o número conectado. "
+                        "Verifique a conexão do WhatsApp.", status=503)
+
+        link = f"https://wa.me/{digits}"
+        message = (f"Iniciar conversa com +{digits}\n{link}\n\n"
+                   f"Toque no link para abrir a conversa direto no WhatsApp.")
+
+        try:
+            send_result = await asyncio.to_thread(gowa_client.send_message, own, message)
+        except Exception as e:
+            logger.error("[SelfLink] Failed to send link for %s to %s: %s", digits, own, e)
+            return _err(f"Falha ao enviar o link: {e}", status=500)
+
+        msg_id = extract_msg_id(send_result)
+        state.recently_sent[f"{own}:{message[:120]}"] = time.time()
+
+        try:
+            msg_data = await asyncio.to_thread(
+                agent_handler.save_operator_message, own, message,
+                status="operator", msg_id=msg_id,
+            )
+        except Exception as e:
+            logger.error("[SelfLink] Failed to save message for %s: %s", own, e)
+            msg_data = None
+
+        if msg_data:
+            await ws_manager.broadcast("new_message", {"phone": own, "message": msg_data})
+
+        await emit_with_filter("message.sent", {
+            "phone": own, "text": message, "msg_id": msg_id,
+            "media_type": None, "media_path": None,
+            "source": "operator", "status": "operator",
+            "reply_to_msg_id": None,
+            "ts": time.time(),
+        })
+
+        logger.info("[SelfLink] Sent %s to own number %s", link, own)
+        return _ok({"link": link, "phone": digits, "own_phone": own, "msg_id": msg_id})
+
     @app.get("/api/contacts/unread-count")
     async def unread_count():
         """Number of conversations with unread messages (for the browser-tab badge).

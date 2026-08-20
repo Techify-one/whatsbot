@@ -63,6 +63,10 @@ def register_routes(app, deps):
             "account_url": settings.get("account_url", ""),
             "low_balance_enabled": settings.get("low_balance_enabled", True),
             "low_balance_threshold": settings.get("low_balance_threshold", 0.50),
+            "gowa_auto_check_enabled": settings.get("gowa_auto_check_enabled", True),
+            "gowa_skipped_version": settings.get("gowa_skipped_version", ""),
+            "gowa_latest_version": settings.get("gowa_latest_version", ""),
+            "gowa_last_check_at": settings.get("gowa_last_check_at", 0.0),
         })
 
     @app.put("/api/config")
@@ -82,6 +86,9 @@ def register_routes(app, deps):
             "max_executions", "default_ai_enabled", "setup_completed",
             "low_balance_enabled", "low_balance_threshold",
             "ai_engine_enabled",
+            # Only the toggle is user-writable here. gowa_skipped_version has
+            # its own endpoint and the other two are written by the server.
+            "gowa_auto_check_enabled",
         }
         keys_changed = []
         for key, value in body.items():

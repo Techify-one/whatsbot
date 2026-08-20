@@ -4,6 +4,7 @@ import htm from 'htm';
 import { testApiKey, checkForUpdates, performUpdate, markAllUnread, markAllRead } from '../services/api.js';
 import { ModelSelect } from './ModelSelect.js';
 import { DatabaseSettings } from './DatabaseSettings.js';
+import { GowaSettings } from './GowaSettings.js';
 
 const html = htm.bind(h);
 
@@ -39,6 +40,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   const [transferAlertDuration, setTransferAlertDuration] = useState(5);
   const [lowBalanceEnabled, setLowBalanceEnabled] = useState(true);
   const [lowBalanceThreshold, setLowBalanceThreshold] = useState(0.5);
+  const [gowaAutoCheck, setGowaAutoCheck] = useState(true);
   const [maxExecutions, setMaxExecutions] = useState(200);
   const [confirmUnreadAll, setConfirmUnreadAll] = useState(false);
   const [markingAllUnread, setMarkingAllUnread] = useState(false);
@@ -98,6 +100,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       setTransferAlertDuration(config.transfer_alert_duration ?? 5);
       setLowBalanceEnabled(config.low_balance_enabled ?? true);
       setLowBalanceThreshold(config.low_balance_threshold ?? 0.5);
+      setGowaAutoCheck(config.gowa_auto_check_enabled ?? true);
       setMaxExecutions(config.max_executions ?? 200);
       setDefaultAiEnabled(config.default_ai_enabled ?? true);
       setGroupReplyMode(config.group_reply_mode ?? 'mention_only');
@@ -205,6 +208,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       transfer_alert_duration: parseInt(transferAlertDuration, 10) || 5,
       low_balance_enabled: lowBalanceEnabled,
       low_balance_threshold: isNaN(parseFloat(lowBalanceThreshold)) ? 0.5 : parseFloat(lowBalanceThreshold),
+      gowa_auto_check_enabled: gowaAutoCheck,
       max_executions: parseInt(maxExecutions, 10) || 200,
       default_ai_enabled: defaultAiEnabled,
       group_reply_mode: groupReplyMode,
@@ -762,6 +766,12 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
       <//>
 
       <${DatabaseSettings} onNotify=${onNotify} />
+
+      <${GowaSettings}
+        autoCheck=${gowaAutoCheck}
+        onAutoCheckChange=${setGowaAutoCheck}
+        onNotify=${onNotify}
+      />
 
       <!-- Save Button (sticky) -->
       <div class="sticky bottom-0 z-10 bg-wa-panel pt-2 pb-1">

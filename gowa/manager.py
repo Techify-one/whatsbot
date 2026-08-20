@@ -6,16 +6,21 @@ import threading
 import time
 from pathlib import Path
 
+from gowa import binary as gowa_binary
+from gowa import proxy as gowa_proxy
+
 logger = logging.getLogger(__name__)
 
 GOWA_LOG_MAX_BYTES = 10 * 1024 * 1024  # truncate above ~10 MB
 
 
 def _get_gowa_binary() -> Path:
-    """Locate the GOWA binary."""
-    base = Path(__file__).resolve().parent.parent
-    binary = base / "bin" / ("gowa.exe" if sys.platform == "win32" else "gowa")
-    return binary
+    """Locate the GOWA binary.
+
+    Resolution (managed override vs. bundled baseline) lives in
+    ``gowa/binary.py`` so the updater and the API share the exact same rules.
+    """
+    return gowa_binary.resolve_binary()[0]
 
 
 def _gowa_log_path() -> Path:
@@ -47,13 +52,26 @@ class GOWAManager:
         self._max_restarts = 3
         self._restart_window_sec = 60
         self._on_restart = on_restart
+        # Serializes start/stop/restart. The updater stops GOWA from a worker
+        # thread while the watchdog may be trying to respawn it. Reentrant
+        # because restart() calls stop() and start().
+        self._lifecycle_lock = threading.RLock()
 
     @property
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
+    @property
+    def binary_path(self) -> Path:
+        """Path of the binary this manager would launch right now."""
+        return _get_gowa_binary()
+
     def start(self):
         """Start the GOWA process."""
+        with self._lifecycle_lock:
+            self._start_locked()
+
+    def _start_locked(self):
         if self.is_running:
             logger.info("GOWA already running (pid=%s)", self._process.pid)
             return
@@ -61,9 +79,16 @@ class GOWAManager:
         binary = _get_gowa_binary()
         if not binary.exists():
             raise FileNotFoundError(
-                f"GOWA binary not found at {binary}. "
-                "Place gowa.exe in the bin/ directory."
+                f"GOWA binary not found at {binary}. Expected it either at "
+                f"{gowa_binary.bundled_binary_path()} (shipped with the app) or at "
+                f"{gowa_binary.managed_binary_path()} (installed from the panel)."
             )
+
+        # A fresh start clears the crash budget. Without this, an update that
+        # follows a few crashes inherits the old count and the watchdog gives
+        # up after a single further failure.
+        self._restart_count = 0
+        self._restart_window_start = 0.0
 
         cmd = [
             str(binary),
@@ -96,6 +121,27 @@ class GOWAManager:
         if debug_on:
             cmd.extend(["--debug=true"])
 
+        # Outbound proxy for the WhatsApp WebSocket. Passed through the
+        # environment on purpose: an older GOWA ignores an unknown env var, but
+        # would abort on an unknown CLI flag, and argv would leak the password
+        # to ``ps``. See gowa/proxy.py.
+        env = os.environ.copy()
+        proxy_url = gowa_proxy.current_url()
+        if proxy_url:
+            env[gowa_proxy.ENV_VAR] = proxy_url
+            if gowa_proxy.supports_proxy():
+                logger.info("GOWA usando proxy: %s", gowa_proxy.mask_url(proxy_url))
+            else:
+                logger.warning(
+                    "Proxy configurado (%s) mas o GOWA %s é anterior a %s e vai ignorá-lo; "
+                    "atualize o GOWA pelo painel.",
+                    gowa_proxy.mask_url(proxy_url),
+                    gowa_binary.installed_version(),
+                    gowa_proxy.MIN_GOWA_VERSION,
+                )
+        else:
+            env.pop(gowa_proxy.ENV_VAR, None)
+
         logger.info("Starting GOWA (debug=%s): %s", debug_on, " ".join(cmd))
         creation_flags = 0
         if sys.platform == "win32":
@@ -124,6 +170,7 @@ class GOWAManager:
             stdout=stdout_target,
             stderr=stderr_target,
             creationflags=creation_flags,
+            env=env,
         )
         self._running = True
         logger.info("GOWA started (pid=%s)", self._process.pid)
@@ -136,6 +183,10 @@ class GOWAManager:
 
     def stop(self):
         """Stop the GOWA process gracefully."""
+        with self._lifecycle_lock:
+            self._stop_locked()
+
+    def _stop_locked(self):
         self._running = False
         if self._process is None:
             return
@@ -162,9 +213,10 @@ class GOWAManager:
 
     def restart(self):
         """Stop and start GOWA."""
-        self.stop()
-        time.sleep(1)
-        self.start()
+        with self._lifecycle_lock:
+            self._stop_locked()
+            time.sleep(1)
+            self._start_locked()
 
     def _watchdog(self):
         """Watch the GOWA process and restart on crash."""

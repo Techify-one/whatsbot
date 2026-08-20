@@ -8,7 +8,10 @@ Bot de WhatsApp com IA para usuários finais, distribuído como EXE Windows.
 - **SQLAlchemy 2.0 Core + Alembic** — camada de dados portável (Core, sem ORM declarativo)
 - **SQLite** — banco default (WAL mode, driver `sqlite3` da stdlib)
 - **PostgreSQL** — backend opcional via `psycopg[binary]`, configurável pela tela Settings → Banco
-- **GOWA** (go-whatsapp-web-multidevice v8.8.0) — bridge WhatsApp via REST, roda como subprocess
+- **GOWA** (go-whatsapp-web-multidevice) — bridge WhatsApp via REST, roda como subprocess. A versão
+  que acompanha o app fica no arquivo `GOWA_VERSION` na raiz (fonte única lida pelo Dockerfile, pelos
+  launchers e por `gowa/binary.py`). O usuário pode atualizar o binário pelo painel; ver
+  [Atualização do GOWA](#atualização-do-gowa)
 - **Proxy LLM da Techify** (`https://llm.techify.one/api/v1`) — provider de LLM, API **compatível com OpenRouter/OpenAI**. Substituiu o OpenRouter direto: a chave é provisionada pelo wizard de 1ª execução e o crédito/recarga é gerido pela Techify. O base URL é configurável via env `LLM_API_BASE_URL`. A chave continua sendo persistida na config key `openrouter_api_key` (nome legado mantido por compatibilidade)
 - **AGNO** (`agno` 2.x) — framework de agentes usado como **motor de LLM** do agente. O loop de raciocínio + tool calling roda via `agno.agent.Agent`, apontado ao proxy Techify pelo model `OpenAILike`. Encapsulado em [agent/agno_engine.py](agent/agno_engine.py); o `AgentHandler` delega a ele preservando todos os hooks de plugin (filters/events), usage e execution tracking. Transcrição de áudio/descrição de imagem continuam em chamadas diretas ao cliente OpenAI (não são agênticas)
 - **FastAPI + uvicorn** — backend web (REST API + WebSocket)
@@ -57,7 +60,13 @@ storages/plugins/    → user-writable, ignorado por .gitignore (preservado em u
 web/index.html       → entry point do frontend (HTML + import map)
 web/static/js/       → componentes Preact + HTM (sem build step)
 web/static/vendor/   → libs JS vendorizadas (preact, htm, tailwind)
-bin/gowa.exe         → binário GOWA pré-compilado (não editar)
+GOWA_VERSION         → versão do GOWA que acompanha esta release (fonte única)
+gowa/binary.py       → resolve qual binário rodar (bin/ bundled vs storages/bin/ gerenciado) + metadados
+gowa/updater.py      → download/verificação/swap/rollback do binário GOWA
+gowa/proxy.py        → proxy de saída da conexão do WhatsApp (validação, URL, teste de conexão)
+server/routes/gowa_update.py → endpoints /api/gowa/* (versão, check, update, rollback, skip, proxy)
+bin/gowa.exe         → binário GOWA pré-compilado do Windows (não editar; atualizações vão pra storages/bin/)
+storages/bin/        → binário GOWA atualizado pelo painel (writable, persiste em Docker/Coolify)
 ```
 
 ## Comandos
@@ -218,6 +227,121 @@ Pontos-chave da integração:
 
 O motor roda **sempre um `Agent` único**. A base extensível para configurar agentes via banco (prompt/modelo/tools lidos do DB) é a infra `ai_agents` + [agent/agent_factory.py](agent/agent_factory.py), ligada por `ai_engine_enabled` — também single-agent.
 
+## Atualização do GOWA
+
+O binário GOWA pode ser atualizado pelo painel em qualquer ambiente (Linux, macOS, Windows, Docker,
+Coolify), sem rebuild nem redeploy. A tela fica em Configurações → card **GOWA (motor do WhatsApp)**,
+no fim da página; a versão instalada também aparece como chip ao lado do status de conexão no topo
+do `/painel`.
+
+### Onde o binário mora (regra fundamental)
+
+**`bin/` é read-only em runtime. `storages/bin/` é o único diretório gravável.**
+
+| Diretório | Papel | Por quê |
+|---|---|---|
+| `bin/<nome>` | **bundled**: o que a imagem, o launcher ou o repo entregou | No Docker é symlink pra camada da imagem (some no redeploy); no Windows `bin/gowa.exe` é tracked no git (escrever ali sujaria a árvore e conflitaria no `git pull`) |
+| `storages/bin/<nome>` | **managed**: instalado pelo painel | `storages/` é gitignored, é volume nomeado no Docker e é preservado pelo self-update do WhatsBot |
+
+`gowa/binary.py:resolve_binary()` escolhe entre os dois **comparando versões**, não preferindo cegamente
+o gerenciado: uma imagem reconstruída com GOWA mais novo ganha de um override velho em `storages/bin`.
+A ordem é `WHATSBOT_GOWA_BINARY` (env, escape hatch de dev) → managed (se `>=` bundled) → bundled.
+
+### Fonte única da versão
+
+O arquivo `GOWA_VERSION` na raiz (uma linha, ex. `8.8.0`) é lido pelo `Dockerfile`, pelo
+`linux_start.sh`, pelo `macos_start.command` e por `gowa/binary.py`. Os launchers e o Dockerfile gravam
+`bin/.gowa_stamp` (gitignored) com a versão efetivamente baixada, e o stamp tem precedência sobre o
+`GOWA_VERSION` na hora de dizer o que está em `bin/`. Como a guarda de download compara stamp vs.
+`GOWA_VERSION`, bumpar o arquivo faz as máquinas de dev re-baixarem no próximo start.
+
+**Regra de release**: ao bumpar `GOWA_VERSION`, commitar o `bin/gowa.exe` correspondente **no mesmo
+commit**. O Windows depende do exe tracked, e a lógica "bundled mais novo ganha" depende dos dois em
+sincronia.
+
+### Faixa homologada
+
+`GOWA_SUPPORTED_RANGE` em [gowa/updater.py](gowa/updater.py) (hoje `>=8.8.0,<10.0.0`) define o que o
+WhatsBot foi testado para falar. Versão fora da faixa continua aparecendo, mas marcada como **não
+homologada**: exige confirmação em dois cliques e **nunca** dispara o modal proativo na tela principal.
+Ao homologar uma versão maior, bumpe a constante junto com o `GOWA_VERSION`.
+
+### Como funciona
+
+- **Verificação**: `gowa_update_check_loop` ([server/background.py](server/background.py)) roda 1×/dia
+  (`GOWA_UPDATE_CHECK_INTERVAL`), 120s após o boot. Só verifica; nunca instala sozinho. Achou versão
+  nova, homologada e diferente de `gowa_skipped_version` → emite `gowa_update_available` e o
+  `GowaUpdateModal` abre em qualquer aba. O `app.js` também faz um seed no boot, pra um painel aberto
+  entre duas checagens não perder um release já publicado.
+- **Instalação** (`gowa/updater.py:install`): valida a versão contra `^\d+\.\d+\.\d+$` (a URL é
+  sempre montada no servidor; aceitar URL do cliente viraria SSRF), baixa o zip para
+  `storages/bin/.tmp/`, confere o SHA-256 contra o `checksums.txt` publicado (`checksums-macos.txt` no
+  macOS), extrai só o membro `{os}-{arch}`, roda `chmod +x`, remove a quarentena do Gatekeeper no macOS,
+  faz um smoke test (`--help`) para pegar arquitetura errada, para o GOWA, troca o binário com
+  `os.replace` atômico, religa e espera o health check. Em salto de major, tira antes um snapshot de
+  `storages/whatsapp.db*` e `storages/chatstorage.db*` (a sessão do WhatsApp).
+- **Rollback**: se o health check falhar em 45s, reverte sozinho e emite `rolled_back`. O botão
+  "Reverter para vX" fica disponível enquanto houver binário gerenciado.
+- **Concorrência**: `_UPDATE_LOCK` não-bloqueante. Um segundo update simultâneo recebe HTTP 409.
+- **Rate limit**: a API do GitHub permite 60 req/h por IP sem token. O `fetch_latest_release` cacheia
+  por 1h, usa `If-None-Match` e, ao bater no limite, devolve o cache com `rate_limited: true` em vez de
+  erro. `GITHUB_TOKEN` na env é usado se existir.
+
+### Config
+
+| Chave | Default | Descrição |
+|---|---|---|
+| `gowa_auto_check_enabled` | `True` | Liga a verificação diária. Override por env `WHATSBOT_GOWA_AUTO_CHECK` |
+| `gowa_skipped_version` | `""` | Versão que o usuário mandou pular (escrita por `/api/gowa/skip-version`) |
+| `gowa_latest_version` | `""` | Última versão vista (escrita pelo servidor) |
+| `gowa_last_check_at` | `0.0` | Timestamp da última checagem (escrita pelo servidor) |
+
+Só `gowa_auto_check_enabled` está no `allowed_keys` do `PUT /api/config`; as outras são server-only.
+
+### Proxy de saída (conexão do WhatsApp)
+
+O WebSocket do WhatsApp é discado pelo `whatsmeow` direto, então `HTTP_PROXY`/`HTTPS_PROXY` **não**
+valem para ele. O GOWA tem um knob dedicado, disponível a partir da **8.11.0**. A tela fica no mesmo
+card **GOWA (motor do WhatsApp)**, logo abaixo da versão.
+
+Dois jeitos de preencher, porque cada serviço entrega de um jeito:
+
+- **IP e porta**: tipo (SOCKS5/HTTP/HTTPS), IP ou host, porta e, quando o serviço exigir, usuário e
+  senha. Colar `1.2.3.4:1080` no campo de host separa host e porta sozinho; porta vazia cai no default
+  do tipo (1080/8080/443).
+- **URL única**: `socks5://usuario:senha@host:1080`. Usuário e senha são opcionais.
+
+Detalhes de implementação:
+
+- **Vai por env var, não por flag**: o [gowa/manager.py](gowa/manager.py) injeta `WHATSAPP_PROXY` no
+  `env` do `Popen`. Um GOWA antigo ignora env desconhecida, mas **aborta** com flag desconhecida
+  (`--whatsapp-proxy`) e nunca subiria; além disso argv vaza a senha no `ps`. Com GOWA < 8.11.0 o
+  painel mostra o aviso e o start loga um warning.
+- **Aplicar exige restart**: o proxy só entra no dial da conexão. `PUT /api/gowa/proxy` reinicia o GOWA
+  automaticamente, e só quando a URL efetiva realmente mudou.
+- **Senha nunca volta em claro**: a API devolve `***`; reenviar `***` (no campo ou dentro da URL)
+  significa "mantém a senha salva".
+- **Teste de conexão**: `POST /api/gowa/proxy/test` abre um túnel de verdade até `web.whatsapp.com:443`
+  (handshake SOCKS5 com auth RFC1929, ou `CONNECT` com `Proxy-Authorization`), tudo em stdlib. Testa o
+  que está na tela, então dá pra validar as credenciais antes de salvar.
+- **Escape hatch**: `WHATSBOT_GOWA_PROXY` na env tem prioridade sobre o painel (útil em
+  Docker/Coolify); nesse caso a UI aparece travada com o aviso.
+
+| Chave | Default | Descrição |
+|---|---|---|
+| `gowa_proxy_enabled` | `False` | Liga o proxy |
+| `gowa_proxy_mode` | `"fields"` | `fields` (IP/porta/usuário/senha) ou `url` (URL única) |
+| `gowa_proxy_scheme` | `"socks5"` | `socks5`, `http` ou `https` |
+| `gowa_proxy_host` / `gowa_proxy_port` | `""` / `0` | Endereço do proxy no modo `fields` |
+| `gowa_proxy_username` / `gowa_proxy_password` | `""` | Credenciais, quando o serviço exigir |
+| `gowa_proxy_url` | `""` | URL completa no modo `url` |
+
+Nenhuma dessas chaves está no `allowed_keys` do `PUT /api/config`: a escrita passa só por
+`/api/gowa/proxy`, que valida antes de salvar.
+
+**Atenção em Docker Swarm com múltiplas réplicas**: `storages` é volume local por nó, então cada réplica
+atualizaria o próprio binário. O update loga um warning nesse caso.
+
 ## Fotos de perfil (avatars)
 
 [server/avatars.py](server/avatars.py) cacheia as fotos de perfil em disco em `statics/avatars/<phone>.jpg` (servidas pelo mount estático). Como o WhatsApp não emite evento de "foto mudou", a atualização é por re-fetch do GOWA (ao abrir a conversa e numa varredura periódica de fundo — `AVATAR_REFRESH_INTERVAL = 1800s` em [server/background.py](server/background.py)), sobrescrevendo o arquivo só quando os bytes diferem. O frontend faz cache-bust pelo mtime (`avatar_v`); uma mudança dispara o WS `avatar_updated` `{phone, v}` pra atualizar ao vivo sem reload.
@@ -250,6 +374,7 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 | POST | `/api/webhook` | Recebe mensagens do GOWA (webhook) |
 | GET | `/api/contacts?archived=true` | Lista apenas contatos/grupos arquivados |
 | GET | `/api/contacts/unread-count` | Total de mensagens não lidas (badge global) |
+| POST | `/api/contacts/send-self-link` | Envia o link `wa.me` do número pesquisado para o próprio WhatsApp conectado (alternativa segura a iniciar conversa pela API não oficial) |
 | POST | `/api/contacts/{phone}/pin` | Fixa/desafixa a conversa (`{pinned}`). Fixadas vão pro topo da lista. WS `contact_pinned` |
 | POST | `/api/contacts/{phone}/unread` | Marca a conversa como não lida (manual) |
 | POST | `/api/contacts/mark-all-read` | Zera não lidas de todas as conversas |
@@ -270,6 +395,14 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 | POST | `/api/plugins/import` | Importa um plugin via upload de `.zip` |
 | DELETE | `/api/plugins/{id}` | Remove a pasta + tabelas `plugin_<id>_*` + settings namespaceadas |
 | POST | `/api/plugins/restart` | Restart manual do servidor |
+| GET | `/api/gowa/version` | Versão do GOWA em uso, origem (`bundled`/`managed`/`env`), se há backup pra reverter |
+| GET | `/api/gowa/update/check?force=1` | Consulta a última release no GitHub (cache 1h) + se está na faixa homologada |
+| POST | `/api/gowa/update` | Baixa, verifica o SHA-256, troca o binário e reinicia. Body `{version?, force_unsupported?}`. 409 se já houver update rodando |
+| POST | `/api/gowa/rollback` | Restaura a versão anterior do GOWA |
+| POST | `/api/gowa/skip-version` | `{version}` — não avisa mais nessa versão específica |
+| GET | `/api/gowa/proxy` | Config do proxy de saída (senha mascarada) + se o GOWA instalado suporta |
+| PUT | `/api/gowa/proxy` | Salva o proxy e reinicia o GOWA quando a URL efetiva muda |
+| POST | `/api/gowa/proxy/test` | Testa o proxy de verdade (handshake SOCKS5 ou HTTP CONNECT até `web.whatsapp.com:443`) |
 | `*` | `/api/plugins/{id}/*` | Endpoints REST mountados pelo plugin (router próprio) |
 | GET | `/api/admin/database` | Info do backend atual (dialect, URL redacted, caminho do config) |
 | POST | `/api/admin/migrate-to-postgres` | Inicia migração SQLite → Postgres. Body: `{postgres_url}`. Status via WS `db_migration_progress` |
@@ -278,7 +411,10 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 
 Formato de resposta REST: `{"ok": bool, "data": ..., "error": ...}`
 
-Eventos WebSocket (frontend): `{"event": "...", "data": {...}}` — inclui `status`, `qr_update`, `gowa_status`, `config_saved`, `new_message`, `message_reaction`, `message_revoked`, `message_deleted`, `contact_pinned`, `group_participants_changed`, `avatar_updated` (`{phone, v}` — `v` = mtime do arquivo, usado pra cache-bust da foto), `low_balance` (saldo abaixo do threshold → abre o modal de recarga).
+Eventos WebSocket (frontend): `{"event": "...", "data": {...}}` — inclui `status`, `qr_update`, `gowa_status`, `config_saved`, `new_message`, `message_reaction`, `message_revoked`, `message_deleted`, `contact_pinned`, `group_participants_changed`, `avatar_updated` (`{phone, v}` — `v` = mtime do arquivo, usado pra cache-bust da foto), `low_balance` (saldo abaixo do threshold → abre o modal de recarga),
+`gowa_update_available` (nova versão do GOWA → abre o modal de atualização), `gowa_update_progress`
+(`{phase, progress, version}`, `phase ∈ {downloading, verifying, installing, restarting, health_check, rollback}`),
+`gowa_update_done` (`{ok, version, previous_version, rolled_back, message}`).
 
 ## GOWA REST API (endpoints reais — v8.8.0 multi-device)
 
@@ -579,6 +715,8 @@ Testes de endpoint em `tests/test_endpoints.py` — cobrem todos os endpoints da
 # Rodar testes (não precisa de servidor rodando)
 source venv/Scripts/activate
 python tests/test_endpoints.py
+python tests/test_gowa_update.py   # updater do GOWA (offline, release falsa via file://)
+python tests/test_gowa_proxy.py    # proxy do GOWA (offline, proxies SOCKS5/HTTP falsos em socket)
 ```
 
 Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_DB_URL=postgresql+psycopg://...` para rodar contra Postgres), inserem dados de teste (contatos, mensagens, tags, usage), e validam ~196 checagens (helper `check(...)`) cobrindo:
@@ -587,6 +725,7 @@ Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_D
 - Tags (CRUD + contact tags)
 - Usage (summary, by-contact, detail)
 - Logs, Webhook payloads, Webhook (presence, echo, ack, reaction, reply/quoted, revoke)
+- GOWA (versão, check/update/rollback/skip-version e **proxy**: validação, máscara de senha, restart e teste de conexão)
 - WhatsApp/QR (get, refresh, reconnect, logout)
 - Sandbox (send, clear)
 - Frontend SPA routes (inclui `/wizard`)
@@ -640,7 +779,8 @@ python -c "import uvicorn; from server.dev import app; uvicorn.run(app, host='12
 - **Login quando já conectado**: `GET /app/login` retorna erro `ALREADY_LOGGED_IN` se o device já está autenticado — verificar `is_connected()` antes de pedir QR
 - **Respostas aninhadas**: listas de chats/mensagens vêm em `results.data[]`, não direto em `results`
 - JIDs do WhatsApp seguem formato `5511999999999@s.whatsapp.net` — extrair phone com `.split("@")[0]`
-- PyInstaller no Windows: paths de binários e web/ mudam (`sys._MEIPASS`), tratado em `gowa/manager.py` e `server/app.py`
+- O PyInstaller foi removido do projeto: não há mais tratamento de `sys._MEIPASS` em `gowa/manager.py`
+  nem em `server/helpers.py`. A distribuição no Windows é o repositório + `windows_start.bat`
 - `subprocess.CREATE_NO_WINDOW` é necessário no Windows para não abrir janela de console do GOWA
 - GOWA usa `stdout=subprocess.DEVNULL` — NUNCA usar `subprocess.PIPE` sem consumir, causa deadlock no Windows
 - Config auto-salva no shutdown do server (lifespan) e na primeira execução (`Settings.load`)

@@ -2,7 +2,7 @@ import { h } from 'preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
 import { SearchIcon, DefaultAvatar, GroupAvatar, SingleCheckIcon, DoubleCheckIcon, ClockIcon, ArchiveIcon } from './icons.js';
-import { formatTime, avatarUrl } from './utils.js';
+import { formatTime, avatarUrl, formatPhoneDisplay } from './utils.js';
 import { TagPicker } from './TagPicker.js';
 
 const html = htm.bind(h);
@@ -29,12 +29,6 @@ function normalizePhone(input) {
 
 function looksLikePhone(input) {
   return input.replace(/\D/g, '').length >= 10;
-}
-
-function formatPhoneDisplay(phone) {
-  if (!phone || phone.length < 12) return phone;
-  // 55 85 97360559 → +55 (85) 97360-559
-  return `+${phone.slice(0, 2)} (${phone.slice(2, 4)}) ${phone.slice(4, 9)}-${phone.slice(9)}`;
 }
 
 // Casefold + strip accents, mirroring the backend `_fold` so highlighting matches
