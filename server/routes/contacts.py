@@ -117,7 +117,7 @@ def register_routes(app, deps):
                         "Verifique a conexão do WhatsApp.", status=503)
 
         link = f"https://wa.me/{digits}"
-        message = (f"Iniciar conversa com +{digits}\n{link}\n\n"
+        message = (f"Iniciar conversa com +{digits}\n\n{link}\n\n"
                    f"Toque no link para abrir a conversa direto no WhatsApp.")
 
         try:
