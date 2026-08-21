@@ -18,21 +18,40 @@ LLM_API_BASE_URL = os.environ.get(
     "LLM_API_BASE_URL", "https://llm.techify.one/api/v1"
 ).rstrip("/")
 
-# Techify account provisioning — used by the first-run setup wizard. The
-# WhatsBot fetches the current provisioning number from TECHIFY_SERVICE_NUMBER_URL
-# and sends a WhatsApp message to it, Techify creates an account + API key, and
-# the wizard polls TECHIFY_REQUEST_APIKEY_URL (keyed by the connected WhatsApp
-# number) until the key is ready. Once the account is created the key stays
-# downloadable for ~1 minute. TECHIFY_PROVISION_NUMBER is a fallback used only
-# when the service-number endpoint is unreachable.
+# Techify account provisioning — used by the first-run setup wizard. The WhatsBot
+# fetches the current provisioning TARGET (destination number *and* the phrase to
+# send) from TECHIFY_SERVICE_NUMBER_URL, sends that WhatsApp message to that
+# number, Techify creates an account + API key, and the wizard polls
+# TECHIFY_REQUEST_APIKEY_URL (keyed by the connected WhatsApp number) until the
+# key is ready. Once the account is created the key stays downloadable for
+# ~1 minute.
+#
+# The endpoint answers ``{"ok": true, "phone": "...", "message": "..."}`` and is
+# the SOURCE OF TRUTH for both fields: rotating the number or the phrase is a
+# matter of editing that response — no client release, no env anywhere. Both
+# fields are resolved INDEPENDENTLY (endpoint -> env -> literal below), so a
+# response that does not carry ``message`` yet still dictates ``phone``, and the
+# phrase falls back on its own.
+#
+# ⚠️ The literals below are the LAST safety net, for when the endpoint is down —
+# they are NOT the lever for changing either value (editing them means shipping a
+# release to every install). "No destination" is still a possible outcome — when
+# someone blanks the env or a plugin aborts the seam — and in that case the send
+# is REFUSED with an actionable error instead of going to a number nobody chose.
+# The full precedence, plugin seams included, lives in
+# ``server/routes/setup.fetch_provision_target``.
 TECHIFY_SERVICE_NUMBER_URL = os.environ.get(
     "TECHIFY_SERVICE_NUMBER_URL", "https://llm.techify.one/service_number"
 ).rstrip("/")
-TECHIFY_PROVISION_NUMBER = os.environ.get("TECHIFY_PROVISION_NUMBER", "5513981744038")
+TECHIFY_PROVISION_NUMBER = os.environ.get(
+    "TECHIFY_PROVISION_NUMBER", "5513981744038"
+).strip()
 TECHIFY_REQUEST_APIKEY_URL = os.environ.get(
     "TECHIFY_REQUEST_APIKEY_URL", "https://llm.techify.one/request-apikey"
 ).rstrip("/")
-TECHIFY_PROVISION_MESSAGE = "Quero Criar conta e receber minha Chave de API"
+TECHIFY_PROVISION_MESSAGE = os.environ.get(
+    "TECHIFY_PROVISION_MESSAGE", "Quero Criar conta e receber minha Chave de API"
+).strip()
 
 
 _ENV_OVERRIDES: dict[str, tuple[str, Callable[[str], Any]]] = {

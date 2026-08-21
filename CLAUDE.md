@@ -203,9 +203,11 @@ Info é salva automaticamente via tool calling do LLM e injetada no system promp
 
 O WhatsBot usa o **proxy LLM da Techify** (`https://llm.techify.one/api/v1`) como provider — API compatível com OpenRouter/OpenAI, então o cliente OpenAI (`base_url=LLM_API_BASE_URL`) e os endpoints `/models` e `/credits` funcionam sem mudança. As constantes vivem em [config/settings.py](config/settings.py) (`LLM_API_BASE_URL`, `TECHIFY_SERVICE_NUMBER_URL`, `TECHIFY_PROVISION_NUMBER`, `TECHIFY_REQUEST_APIKEY_URL`, `TECHIFY_PROVISION_MESSAGE`), todas com override por env.
 
+**Destino do provisionamento = número + frase, resolvidos CAMPO A CAMPO** ([server/routes/setup.py](server/routes/setup.py) `fetch_provision_target`): `/service_number` (fonte da verdade — rotacionar qualquer um dos dois é editar a resposta dele, servida pela Cloudflare, sem release nem env em cliente nenhum) → env (`TECHIFY_PROVISION_NUMBER` / `TECHIFY_PROVISION_MESSAGE`) → **literal em [config/settings.py](config/settings.py)**, que é a última rede para o endpoint fora do ar → os seams `filter.provisioning.number` / `.message`, que têm a última palavra. ⚠️ Os dois campos são independentes: uma resposta que ainda não traga `message` continua ditando o `phone`, e a frase cai no fallback. ⚠️ A frase é o **gatilho** que o destino reconhece, então trocar o número sem trocar a frase junto entrega um texto que o outro lado ignora **em silêncio** — é por isso que os dois seams existem em par. `None`/`""` em qualquer um dos dois **aborta**: o wizard responde com erro acionável (HTTP 400) e **nada** é enviado — sem materializar o contato e sem armar o polling da chave.
+
 **Wizard de 1ª execução** ([web/static/js/components/SetupWizard.js](web/static/js/components/SetupWizard.js), rota `/wizard`): em 3 passos —
 1. **Conectar WhatsApp** (QR; auto-avança ao conectar).
-2. **Provisionar chave de API**: o WhatsBot consulta `/service_number` da Techify, manda uma mensagem WhatsApp ao número de provisionamento pedindo a conta+chave (`POST /api/config/request-apikey`), faz polling até a chave chegar (com TTL) e já credita ~US$1. O contato do número de provisionamento tem a IA desativada automaticamente.
+2. **Provisionar chave de API**: o WhatsBot consulta `/service_number` da Techify — que devolve `{ok, phone, message}` e é a **fonte da verdade do par destino+frase** —, manda essa mensagem ao número retornado pedindo a conta+chave (`POST /api/setup/request-key`), faz polling até a chave chegar (com TTL) e já credita ~US$1. O contato do número de provisionamento tem a IA desativada automaticamente.
 3. **Prompt do agente**: o usuário escreve a personalidade da IA. Pode pular o wizard e ir direto pro chat.
 
 O wizard só aparece em instalações ainda não configuradas. A chave é persistida em `config["openrouter_api_key"]` (nome legado).
@@ -548,7 +550,7 @@ Referências (na Loja de Plugins, ver "Plugins de exemplo"): `auto_signature` (s
 
 - **`id`**: snake_case, regex `^[a-z][a-z0-9_]{0,31}$`. Vira o prefixo de tabela e o nome do pacote Python.
 - **Tabelas**: SEMPRE `plugin_<id>_<nome>`. O migrator rejeita o contrário com erro claro.
-- **`whatsbot_api_version`**: range semver no manifest (ex: `">=1.0,<2.0"`). Versão atual em `plugins/manifest.WHATSBOT_API_VERSION`.
+- **`whatsbot_api_version`**: range semver no manifest (ex: `">=1.0,<2.0"`). Versão atual em `plugins/manifest.WHATSBOT_API_VERSION` — hoje **`1.1.0`** (aditiva: os seams `filter.provisioning.number` / `.message`). Plugin que precise deles declara `">=1.1,<2.0"`; o resto continua em `">=1.0,<2.0"`.
 - **Permissions**: declaradas no manifest mas **não enforced no MVP** — informativo apenas.
 - **Configuração no próprio plugin**: opções de um plugin vão SEMPRE na aba de configuração dele (settings declarativas e/ou screen `config: true`), NUNCA numa aba nova do painel de Configurações do core. Ver "Onde fica a configuração de um plugin".
 - **Settings**: chaves persistem com prefixo `plugin.<id>.`. Plugin nunca grava direto na tabela `config` sem esse prefixo.
@@ -623,6 +625,8 @@ Chave especial `*` — subscrever via `EVENT_HANDLERS = {"*": fn}` recebe todo e
 | `filter.reply.raw` | `_send_reply` antes do split | `str` | Nada é enviado | `phone` |
 | `filter.reply.parts` | depois do split | `list[str]` | Nada é enviado | `phone` |
 | `filter.reply.part` | cada parte antes do GOWA (vale pra send manual também) | `str` | Aquela parte é pulada | `phone` |
+| `filter.provisioning.number` | **NOVO (API 1.1.0)** — `setup.fetch_provision_target`, DEPOIS de o core resolver o destino (`/service_number` → env → literal do código) | `str` | **Aborta o envio**: sem destino o wizard recusa com erro acionável em vez de mandar a frase para um número que ninguém escolheu. O core não valida formato — normalizar é de quem responde | `source ∈ {service_number, fallback}, message` (a frase JÁ resolvida) |
+| `filter.provisioning.message` | **NOVO (API 1.1.0)** — mesmo produtor, logo DEPOIS do de número, e **só se houver destino** | `str` | **Aborta o envio**: mensagem vazia queima a única abertura de conversa com um contato novo | `source, number` (o destino já decidido) |
 
 **Lifecycle events bypassam `filter.event.before_emit`** — `plugin.loaded/enabled/disabled/settings.changed` e `app.startup/shutdown` chamam `emit()` direto. Plugin não pode bloquear seu próprio carregamento.
 
@@ -717,15 +721,17 @@ source venv/Scripts/activate
 python tests/test_endpoints.py
 python tests/test_gowa_update.py   # updater do GOWA (offline, release falsa via file://)
 python tests/test_gowa_proxy.py    # proxy do GOWA (offline, proxies SOCKS5/HTTP falsos em socket)
+python tests/test_provisioning_target.py  # par destino+frase do provisionamento + os dois seams (offline)
 ```
 
-Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_DB_URL=postgresql+psycopg://...` para rodar contra Postgres), inserem dados de teste (contatos, mensagens, tags, usage), e validam ~196 checagens (helper `check(...)`) cobrindo:
+Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_DB_URL=postgresql+psycopg://...` para rodar contra Postgres), inserem dados de teste (contatos, mensagens, tags, usage), e validam ~250 checagens (helper `check(...)`) cobrindo:
 - Health, Auth (com e sem senha), Config (GET/PUT/test-key, `group_reply_mode`), Status, Balance
 - Contacts (list, detail, search, archived, send, retry, image, audio, presence, read, toggle-ai, update info, **pin/unpin**, **unread/mark-all-read/mark-all-unread**, **unread-count**, **@menção em grupo / has_unread_mention**, **react/delete de mensagem**, **members** de grupo)
 - Tags (CRUD + contact tags)
 - Usage (summary, by-contact, detail)
 - Logs, Webhook payloads, Webhook (presence, echo, ack, reaction, reply/quoted, revoke)
 - GOWA (versão, check/update/rollback/skip-version e **proxy**: validação, máscara de senha, restart e teste de conexão)
+- Setup wizard (`request-key` com o `/service_number` fixado — o par destino+frase vai como veio do endpoint — e os dois abortos dos seams; `key-status` pendente/pronta)
 - WhatsApp/QR (get, refresh, reconnect, logout)
 - Sandbox (send, clear)
 - Frontend SPA routes (inclui `/wizard`)

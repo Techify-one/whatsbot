@@ -802,28 +802,70 @@ class _FakeTechifyResp:
         self.status_code = status_code
         self._payload = payload
 
+    def raise_for_status(self):
+        pass
+
     def json(self):
         return self._payload
 
 
 def _fake_async_client(resp):
-    """Build a patch target mimicking httpx.AsyncClient as an async CM."""
+    """Build a patch target mimicking httpx.AsyncClient as an async CM.
+
+    Answers both verbs with the same body: ``GET /service_number`` (the
+    provisioning target) and ``POST /request-apikey`` (the key polling).
+    """
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=resp)
+    fake_client.get = AsyncMock(return_value=resp)
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=fake_client)
     cm.__aexit__ = AsyncMock(return_value=False)
     return MagicMock(return_value=cm)
 
 
+# The provisioning target (number + phrase) comes from Techify's
+# /service_number. Pinning it keeps this block off the network — otherwise the
+# assertions below would depend on the endpoint being reachable from wherever
+# the suite runs.
+_service_number = _fake_async_client(_FakeTechifyResp(200, {
+    "ok": True, "phone": "5599000000001", "message": "Frase publicada no endpoint"}))
+
 # request-key: sends the provisioning WhatsApp message and arms polling
 _send_calls_before = mock_gowa_client.send_message.call_count
-r = client.post("/api/setup/request-key")
+with patch("server.routes.setup.httpx.AsyncClient", _service_number):
+    r = client.post("/api/setup/request-key")
 check("POST /api/setup/request-key -> 200", r.status_code == 200)
 check("POST /api/setup/request-key -> returns number",
       r.json()["data"].get("number") == "5511999990001")
 check("POST /api/setup/request-key -> WhatsApp message sent",
       mock_gowa_client.send_message.call_count == _send_calls_before + 1)
+check("POST /api/setup/request-key -> sends the endpoint's pair (number + phrase)",
+      mock_gowa_client.send_message.call_args[0][:2]
+      == ("5599000000001", "Frase publicada no endpoint"),
+      detail=str(mock_gowa_client.send_message.call_args))
+
+# Both provisioning seams abort the send: an empty destination would fire the
+# phrase at a number nobody chose, and an empty phrase would burn the single
+# conversation opening WhatsApp grants with a brand-new contact.
+from plugins import events as _bus  # noqa: E402
+
+for _seam, _label in (("filter.provisioning.number", "sem destino"),
+                      ("filter.provisioning.message", "sem frase")):
+    _bus.register_filter("test_setup_abort", _seam, lambda ctx, value: None)
+    _send_calls_before = mock_gowa_client.send_message.call_count
+    with patch("server.routes.setup.httpx.AsyncClient", _service_number):
+        r = client.post("/api/setup/request-key")
+    _bus._filters.pop(_seam, None)
+    check(f"POST /api/setup/request-key ({_label}) -> erro acionável",
+          r.status_code == 400 and not r.json()["ok"] and r.json().get("error"),
+          detail=f"{r.status_code} {r.json()}")
+    check(f"POST /api/setup/request-key ({_label}) -> nada é enviado",
+          mock_gowa_client.send_message.call_count == _send_calls_before)
+
+# Re-arm the polling the abort cases refused to arm, so key-status can run.
+with patch("server.routes.setup.httpx.AsyncClient", _service_number):
+    client.post("/api/setup/request-key")
 
 # key-status: account not ready yet
 with patch("server.routes.setup.httpx.AsyncClient",

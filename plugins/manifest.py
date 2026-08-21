@@ -17,7 +17,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-WHATSBOT_API_VERSION = "1.0.0"
+# 1.1.0: ADDITIVE — the provisioning seams ``filter.provisioning.number`` and
+# ``filter.provisioning.message`` (both ``str``), applied by
+# ``server/routes/setup.fetch_provision_target``. They come as a symmetric pair
+# because the phrase IS the trigger the destination recognizes: a plugin that
+# points the send at another number without being able to swap the message
+# delivers a text the other side silently ignores. ``None``/``""`` on either one
+# aborts and the wizard refuses to send. A plugin that needs them declares
+# ``">=1.1,<2.0"``; everything else stays on ``">=1.0,<2.0"``.
+WHATSBOT_API_VERSION = "1.1.0"
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
