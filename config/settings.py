@@ -135,12 +135,15 @@ DEFAULT_CONFIG = {
     # ``gowa_auto_check_enabled`` liga APENAS a verificação diária de novas
     # releases; a instalação sempre exige aprovação explícita do usuário.
     # ``gowa_skipped_version`` guarda a versão que o usuário mandou pular (não
-    # avisa mais nela, mas volta a avisar na próxima). As duas últimas são
-    # escritas pelo servidor para o cache sobreviver a um restart.
+    # avisa mais nela, mas volta a avisar na próxima). Versão consultada,
+    # horário e avaliação são escritos pelo servidor para sobreviver a restart.
     "gowa_auto_check_enabled": True,
     "gowa_skipped_version": "",
     "gowa_latest_version": "",
     "gowa_last_check_at": 0.0,
+    # Cached structured verdict for the installed→latest release interval.
+    # It contains public release evidence only; no API key or user content.
+    "gowa_release_assessment_cache": {},
     # --- Proxy de saída do GOWA ---------------------------------------------
     # Roteia a conexão do WhatsApp (WebSocket do whatsmeow) por um proxy.
     # Requer GOWA >= 8.11.0. ``gowa_proxy_mode`` escolhe entre preencher os

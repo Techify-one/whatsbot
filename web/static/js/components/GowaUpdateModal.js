@@ -19,6 +19,9 @@ export function GowaUpdateModal({
   installedVersion,
   supported = true,
   releaseUrl,
+  riskLevel = 'medium',
+  reason = '',
+  evidence = [],
   installing = false,
   progress = null,
   onUpdateNow,
@@ -68,7 +71,7 @@ export function GowaUpdateModal({
             <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" class="text-wa-teal" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.36-2.64L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.36 2.64L21 3"/><polyline points="21 3 21 9 15 9"/><polyline points="3 21 3 15 9 15"/></svg>
           </div>
           <h2 class="text-base font-semibold text-wa-text">
-            Nova versão do WhatsApp (GOWA)
+            Atualização recomendada do GOWA
           </h2>
         </div>
 
@@ -77,6 +80,23 @@ export function GowaUpdateModal({
           <span class="mx-1.5">→</span>
           Disponível: <span class="font-mono font-semibold text-wa-teal">${latestVersion || '?'}</span>
         </p>
+
+        ${reason ? html`
+          <div class="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs leading-relaxed">
+            <strong>
+              ${riskLevel === 'high' ? 'Compatibilidade importante:' : 'Motivo da recomendação:'}
+            </strong>
+            <span class="block mt-1">${reason}</span>
+            ${Array.isArray(evidence) && evidence.length ? html`
+              <ul class="mt-2 pl-4 list-disc text-blue-800">
+                ${evidence.slice(0, 3).map(item => html`<li>${item}</li>`)}
+              </ul>
+            ` : null}
+            <span class="block mt-2 text-blue-700">
+              Isso pode reduzir riscos de incompatibilidade, mas não garante que o número não será bloqueado.
+            </span>
+          </div>
+        ` : null}
 
         ${!supported ? html`
           <div class="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-xs leading-relaxed">

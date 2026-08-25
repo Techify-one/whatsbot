@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 GOWA_GH_REPO = "aldinokemal/go-whatsapp-web-multidevice"
 GOWA_RELEASES_API = f"https://api.github.com/repos/{GOWA_GH_REPO}/releases/latest"
+GOWA_RELEASES_LIST_API = f"https://api.github.com/repos/{GOWA_GH_REPO}/releases?per_page=100"
+GOWA_COMPARE_API = f"https://api.github.com/repos/{GOWA_GH_REPO}/compare/v{{current}}...v{{latest}}"
+GOWA_RAW_GO_MOD = f"https://raw.githubusercontent.com/{GOWA_GH_REPO}/v{{version}}/src/go.mod"
+WHATSMEOW_COMPARE_API = "https://api.github.com/repos/tulir/whatsmeow/compare/{current}...{latest}"
 GOWA_RELEASE_DOWNLOAD = (
     f"https://github.com/{GOWA_GH_REPO}/releases/download/v{{version}}/{{asset}}"
 )
@@ -50,7 +54,7 @@ _HEALTH_TIMEOUT_SEC = 45     # must stay under the watchdog's 3-crashes-in-60s b
 _DOWNLOAD_TIMEOUT_SEC = 120
 _API_TIMEOUT_SEC = 15
 _CHUNK = 64 * 1024
-_NOTES_MAX_CHARS = 2000
+_NOTES_MAX_CHARS = 12000
 
 # The download URL is always built server-side from a version matched by this
 # regex. Never accept a URL from the client: it would turn into SSRF / path
@@ -75,6 +79,9 @@ class GowaUpdateError(RuntimeError):
 
 _UPDATE_LOCK = threading.Lock()
 _release_cache: dict = {"data": None, "fetched_at": 0.0, "etag": ""}
+_release_list_cache: dict = {"data": None, "fetched_at": 0.0, "etag": ""}
+_compare_cache: dict[tuple[str, str], dict] = {}
+_whatsmeow_cache: dict[tuple[str, str], dict] = {}
 _state: dict = {"status": "idle", "phase": "", "progress": 0, "version": "", "message": ""}
 
 
@@ -220,6 +227,195 @@ def fetch_latest_release(force: bool = False) -> dict:
     return {**data, "cached": False, "rate_limited": False}
 
 
+def _release_from_api(payload: dict) -> dict:
+    """Normalize one GitHub release without exposing asset metadata downstream."""
+    version = str(payload.get("tag_name") or "").lstrip("vV")
+    return {
+        "version": version,
+        "published_at": payload.get("published_at") or "",
+        "notes": str(payload.get("body") or "").strip()[:_NOTES_MAX_CHARS],
+        "url": payload.get("html_url") or GOWA_RELEASE_PAGE.format(version=version),
+    }
+
+
+def fetch_release_interval(current: str, latest: str, force: bool = False) -> list[dict]:
+    """Return every stable release in ``(current, latest]``.
+
+    Looking only at ``releases/latest`` loses important compatibility fixes when
+    the installed version is several releases behind. The list is cached with
+    ETag just like the latest-release request and failures fall back to the most
+    recently cached list.
+    """
+    now = time.monotonic()
+    age = now - float(_release_list_cache.get("fetched_at") or 0.0)
+    cached = _release_list_cache.get("data")
+    cache_fresh = (
+        (not force and age < _CHECK_TTL_SEC)
+        or (force and age < _FORCE_MIN_INTERVAL)
+    )
+    if cached and cache_fresh:
+        payloads = cached
+    else:
+        headers = _api_headers()
+        etag = _release_list_cache.get("etag") or ""
+        if etag and cached:
+            headers["If-None-Match"] = etag
+        req = urllib.request.Request(GOWA_RELEASES_LIST_API, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SEC) as resp:
+                payloads = json.loads(resp.read().decode("utf-8"))
+                new_etag = resp.headers.get("ETag", "")
+            if not isinstance(payloads, list):
+                raise json.JSONDecodeError("expected a release list", "", 0)
+            _release_list_cache.update({
+                "data": payloads, "fetched_at": now, "etag": new_etag,
+            })
+        except urllib.error.HTTPError as exc:
+            if exc.code == 304 and cached:
+                _release_list_cache["fetched_at"] = now
+                payloads = cached
+            elif cached:
+                logger.warning("GOWA release-list request failed (%s); serving cache.", exc)
+                payloads = cached
+            else:
+                raise GowaUpdateError(
+                    f"GitHub respondeu {exc.code} ao consultar o histórico de releases."
+                ) from exc
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            if cached:
+                logger.warning("GOWA release-list request failed (%s); serving cache.", exc)
+                payloads = cached
+            else:
+                raise GowaUpdateError(
+                    f"Não consegui consultar o histórico de releases do GOWA: {exc}"
+                ) from exc
+
+    releases = []
+    for payload in payloads:
+        if not isinstance(payload, dict) or payload.get("draft") or payload.get("prerelease"):
+            continue
+        release = _release_from_api(payload)
+        version = release["version"]
+        if not _VERSION_RE.match(version):
+            continue
+        if (gowa_binary.version_cmp(version, current) > 0
+                and gowa_binary.version_cmp(version, latest) <= 0):
+            releases.append(release)
+    releases.sort(key=lambda item: gowa_binary.parse_version(item["version"]))
+    return releases
+
+
+def fetch_compare_commits(current: str, latest: str, force: bool = False) -> list[str]:
+    """Return commit subjects between two release tags (best effort)."""
+    if not _VERSION_RE.match(current or "") or not _VERSION_RE.match(latest or ""):
+        return []
+    key = (current, latest)
+    now = time.monotonic()
+    cached = _compare_cache.get(key)
+    if cached:
+        age = now - float(cached.get("fetched_at") or 0.0)
+        cache_fresh = (
+            (not force and age < _CHECK_TTL_SEC)
+            or (force and age < _FORCE_MIN_INTERVAL)
+        )
+        if cache_fresh:
+            return list(cached.get("data") or [])
+
+    req = urllib.request.Request(
+        GOWA_COMPARE_API.format(current=current, latest=latest), headers=_api_headers()
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SEC) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        commits = payload.get("commits") if isinstance(payload, dict) else []
+        subjects = []
+        for commit in commits or []:
+            message = ((commit.get("commit") or {}).get("message") or "").splitlines()[0].strip()
+            if message:
+                subjects.append(message[:300])
+        _compare_cache[key] = {"data": subjects[:250], "fetched_at": now}
+        return subjects[:250]
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not compare GOWA v%s...v%s: %s", current, latest, exc)
+        return list((cached or {}).get("data") or [])
+
+
+_WHATSMEOW_VERSION_RE = re.compile(
+    r"^\s*go\.mau\.fi/whatsmeow\s+v\S*?-([0-9a-f]{12,40})\s*$", re.MULTILINE
+)
+
+
+def _extract_whatsmeow_revision(go_mod: str) -> str:
+    match = _WHATSMEOW_VERSION_RE.search(go_mod or "")
+    return match.group(1) if match else ""
+
+
+def _fetch_gowa_go_mod(version: str) -> str:
+    if not _VERSION_RE.match(version or ""):
+        return ""
+    req = urllib.request.Request(
+        GOWA_RAW_GO_MOD.format(version=version), headers={"User-Agent": _UA}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SEC) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+        logger.warning("Could not fetch GOWA v%s go.mod: %s", version, exc)
+        return ""
+
+
+def fetch_whatsmeow_commits(current: str, latest: str,
+                            force: bool = False) -> list[str]:
+    """Describe upstream whatsmeow changes between the two GOWA tags.
+
+    GOWA release notes often contain only ``update whatsmeow to latest``. The
+    upstream subjects provide the classifier with the protocol-level detail
+    needed to decide whether that generic dependency bump matters.
+    """
+    if not _VERSION_RE.match(current or "") or not _VERSION_RE.match(latest or ""):
+        return []
+    key = (current, latest)
+    now = time.monotonic()
+    cached = _whatsmeow_cache.get(key)
+    if cached:
+        age = now - float(cached.get("fetched_at") or 0.0)
+        cache_fresh = (
+            (not force and age < _CHECK_TTL_SEC)
+            or (force and age < _FORCE_MIN_INTERVAL)
+        )
+        if cache_fresh:
+            return list(cached.get("data") or [])
+
+    current_rev = _extract_whatsmeow_revision(_fetch_gowa_go_mod(current))
+    latest_rev = _extract_whatsmeow_revision(_fetch_gowa_go_mod(latest))
+    if not current_rev or not latest_rev or current_rev == latest_rev:
+        _whatsmeow_cache[key] = {"data": [], "fetched_at": now}
+        return []
+
+    req = urllib.request.Request(
+        WHATSMEOW_COMPARE_API.format(current=current_rev, latest=latest_rev),
+        headers=_api_headers(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT_SEC) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        commits = payload.get("commits") if isinstance(payload, dict) else []
+        subjects = []
+        for commit in commits or []:
+            message = ((commit.get("commit") or {}).get("message") or "").splitlines()[0].strip()
+            if message:
+                subjects.append(f"[whatsmeow] {message[:280]}")
+        _whatsmeow_cache[key] = {"data": subjects[:250], "fetched_at": now}
+        return subjects[:250]
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "Could not compare whatsmeow %s...%s: %s", current_rev, latest_rev, exc
+        )
+        return list((cached or {}).get("data") or [])
+
+
 def check(settings, force: bool = False) -> dict:
     """Snapshot of "what is installed vs. what is available"."""
     _, source, installed = gowa_binary.resolve_binary()
@@ -242,6 +438,13 @@ def check(settings, force: bool = False) -> dict:
         "rate_limited": False,
         "checked_at": 0.0,
         "error": "",
+        "whatsapp_update_recommended": False,
+        "update_risk_level": "none",
+        "update_reason": "",
+        "update_evidence": [],
+        "assessment_source": "not_needed",
+        "assessment_error": "",
+        "assessed_versions": [],
     }
 
     try:
@@ -268,6 +471,36 @@ def check(settings, force: bool = False) -> dict:
     if settings and version:
         settings["gowa_latest_version"] = version
         settings["gowa_last_check_at"] = result["checked_at"]
+
+    if result["update_available"]:
+        try:
+            releases = fetch_release_interval(installed, version, force=force)
+        except GowaUpdateError as exc:
+            logger.warning("Could not load complete GOWA release interval: %s", exc)
+            releases = []
+        if not any(release.get("version") == version for release in releases):
+            releases.append({
+                "version": version,
+                "published_at": result["published_at"],
+                "notes": result["release_notes"],
+                "url": result["release_url"],
+            })
+            releases.sort(key=lambda item: gowa_binary.parse_version(item["version"]))
+        commits = fetch_compare_commits(installed, version, force=force)
+        commits.extend(fetch_whatsmeow_commits(installed, version, force=force))
+        try:
+            from gowa.release_analyzer import assess_update
+            assessment = assess_update(
+                settings, installed=installed, latest=version,
+                releases=releases, commits=commits,
+            )
+            result.update(assessment)
+        except Exception as exc:
+            # A classifier failure must never hide the manual updater or make
+            # the release check endpoint fail.
+            logger.exception("Unexpected GOWA release assessment failure")
+            result["assessment_source"] = "error"
+            result["assessment_error"] = str(exc)[:300]
 
     return result
 

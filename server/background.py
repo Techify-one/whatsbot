@@ -240,10 +240,11 @@ async def avatar_fetch_task(deps):
 async def gowa_update_check_loop(deps):
     """Check once a day whether a newer GOWA was released.
 
-    Only notifies: installing always requires the user to approve. Versions
-    outside the supported range are deliberately NOT broadcast (they show up
-    flagged in the GOWA settings card instead), so we never push the user
-    towards a build that could break the integration.
+    Only notifies when the release assessment finds a WhatsApp compatibility
+    reason; installing always requires the user to approve. Versions outside
+    the supported range are deliberately NOT broadcast (they show up flagged
+    in the GOWA settings card instead), so we never push the user towards a
+    build that could break the integration.
     """
     settings = deps.settings
     ws_manager = deps.ws_manager
@@ -271,6 +272,7 @@ async def gowa_update_check_loop(deps):
                 if (
                     result.get("update_available")
                     and result.get("latest_supported")
+                    and result.get("whatsapp_update_recommended")
                     and latest
                     and latest != skipped
                 ):
@@ -282,6 +284,11 @@ async def gowa_update_check_loop(deps):
                         "release_url": result.get("release_url", ""),
                         "release_notes": result.get("release_notes", ""),
                         "published_at": result.get("published_at", ""),
+                        "whatsapp_update_recommended": True,
+                        "update_risk_level": result.get("update_risk_level", "medium"),
+                        "update_reason": result.get("update_reason", ""),
+                        "update_evidence": result.get("update_evidence", []),
+                        "assessed_versions": result.get("assessed_versions", []),
                     })
         except Exception as e:
             logger.debug("GOWA update check failed: %s", e)

@@ -11,6 +11,7 @@ import hashlib
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -126,6 +127,33 @@ check("inner name (linux)", gowa_updater.inner_binary_name("linux", "amd64") == 
 check("inner name (windows) tem .exe", gowa_updater.inner_binary_name("windows", "amd64") == "windows-amd64.exe")
 check("checksums darwin é arquivo separado", gowa_updater.checksums_asset("darwin") == "checksums-macos.txt")
 check("checksums linux", gowa_updater.checksums_asset("linux") == "checksums.txt")
+
+
+# ═══════════════════════════════════════════════════════════════════
+section("Release interval")
+
+_saved_release_list_cache = dict(gowa_updater._release_list_cache)
+gowa_updater._release_list_cache.update({
+    "fetched_at": time.monotonic(),
+    "etag": "test",
+    "data": [
+        {"tag_name": "v9.2.0", "body": "latest", "draft": False, "prerelease": False},
+        {"tag_name": "v8.9.0", "body": "first", "draft": False, "prerelease": False},
+        {"tag_name": "v9.0.0-rc1", "body": "rc", "draft": False, "prerelease": True},
+        {"tag_name": "v10.0.0", "body": "future", "draft": False, "prerelease": False},
+        {"tag_name": "v8.8.0", "body": "installed", "draft": False, "prerelease": False},
+    ],
+})
+interval = gowa_updater.fetch_release_interval("8.8.0", "9.2.0")
+check("interval includes all newer stable releases",
+      [item["version"] for item in interval] == ["8.9.0", "9.2.0"])
+check("interval keeps release notes", interval[0]["notes"] == "first")
+check("extract whatsmeow pseudo-version revision",
+      gowa_updater._extract_whatsmeow_revision(
+          "require (\n  go.mau.fi/whatsmeow v0.0.0-20260816113502-fb386f152837\n)"
+      ) == "fb386f152837")
+gowa_updater._release_list_cache.clear()
+gowa_updater._release_list_cache.update(_saved_release_list_cache)
 
 
 # ═══════════════════════════════════════════════════════════════════

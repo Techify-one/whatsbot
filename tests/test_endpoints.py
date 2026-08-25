@@ -952,6 +952,21 @@ _FAKE_RELEASE = {
 }
 _orig_fetch = _gowa_updater.fetch_latest_release
 _gowa_updater.fetch_latest_release = lambda force=False: dict(_FAKE_RELEASE)
+_orig_interval = _gowa_updater.fetch_release_interval
+_orig_compare = _gowa_updater.fetch_compare_commits
+_orig_whatsmeow_compare = _gowa_updater.fetch_whatsmeow_commits
+_gowa_updater.fetch_release_interval = lambda current, latest, force=False: [{
+    "version": "9.1.0",
+    "published_at": _FAKE_RELEASE["published_at"],
+    "notes": "Latest WhatsApp Web protocol support.",
+    "url": _FAKE_RELEASE["url"],
+}]
+_gowa_updater.fetch_compare_commits = lambda current, latest, force=False: []
+_gowa_updater.fetch_whatsmeow_commits = lambda current, latest, force=False: []
+
+from gowa import release_analyzer as _gowa_release_analyzer  # noqa: E402
+_orig_release_llm = _gowa_release_analyzer._call_llm
+_gowa_release_analyzer._call_llm = lambda *_args, **_kwargs: None
 
 r = client.get("/api/gowa/version")
 check("GET /gowa/version -> 200", r.status_code == 200)
@@ -966,6 +981,8 @@ _gc = r.json().get("data", {})
 check("GET /gowa/update/check -> latest_version", _gc.get("latest_version") == "9.1.0")
 check("GET /gowa/update/check -> update_available", _gc.get("update_available") is True)
 check("GET /gowa/update/check -> latest_supported", _gc.get("latest_supported") is True)
+check("GET /gowa/update/check -> compatibilidade recomendada",
+      _gc.get("whatsapp_update_recommended") is True)
 
 # Out-of-range version must ask for confirmation instead of installing.
 r = client.post("/api/gowa/update", json={"version": "10.5.0"})
@@ -997,6 +1014,10 @@ check("PUT /config gowa_auto_check_enabled -> persisted",
 client.put("/api/config", json={"gowa_auto_check_enabled": True})
 
 _gowa_updater.fetch_latest_release = _orig_fetch
+_gowa_updater.fetch_release_interval = _orig_interval
+_gowa_updater.fetch_compare_commits = _orig_compare
+_gowa_updater.fetch_whatsmeow_commits = _orig_whatsmeow_compare
+_gowa_release_analyzer._call_llm = _orig_release_llm
 
 
 # ═══════════════════════════════════════════════════════════════════

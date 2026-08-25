@@ -380,6 +380,7 @@ function App({ onLogout, hasPassword }) {
     }, []),
     onGowaUpdateAvailable: useCallback((data) => {
       if (gowaUpdateIsSnoozed()) return;
+      if (!data || data.whatsapp_update_recommended !== true) return;
       setGowaUpdate(data);
     }, []),
     onGowaUpdateProgress: useCallback((data) => setGowaProgress(data), []),
@@ -425,12 +426,17 @@ function App({ onLogout, hasPassword }) {
       .then(res => {
         const d = res && res.ok && res.data;
         if (!d || !d.update_available || !d.latest_supported) return;
+        if (d.whatsapp_update_recommended !== true) return;
         if (d.latest_version && d.latest_version === d.skipped_version) return;
         setGowaUpdate({
           latest_version: d.latest_version,
           installed_version: d.installed_version,
           supported: d.latest_supported,
           release_url: d.release_url,
+          update_risk_level: d.update_risk_level,
+          update_reason: d.update_reason,
+          update_evidence: d.update_evidence,
+          assessed_versions: d.assessed_versions,
         });
       })
       .catch(() => { /* ignore */ });
@@ -641,6 +647,9 @@ function App({ onLogout, hasPassword }) {
         installedVersion=${gowaUpdate.installed_version}
         supported=${gowaUpdate.supported !== false}
         releaseUrl=${gowaUpdate.release_url}
+        riskLevel=${gowaUpdate.update_risk_level}
+        reason=${gowaUpdate.update_reason}
+        evidence=${gowaUpdate.update_evidence}
         installing=${gowaInstalling}
         progress=${gowaProgress}
         onUpdateNow=${handleGowaUpdateNow}

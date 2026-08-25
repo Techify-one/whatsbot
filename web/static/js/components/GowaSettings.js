@@ -119,6 +119,7 @@ export function GowaSettings({ autoCheck, onAutoCheckChange, onNotify }) {
   const installed = info?.installed_version || '...';
   const latest = info?.latest_version || '';
   const updateAvailable = !!info?.update_available;
+  const whatsappRecommended = info?.whatsapp_update_recommended === true;
   const latestSupported = info?.latest_supported !== false;
   const platformOk = info?.platform_supported !== false;
   const phase = progress?.phase || '';
@@ -155,6 +156,11 @@ export function GowaSettings({ autoCheck, onAutoCheckChange, onNotify }) {
                 ` : null}
                 ${updateAvailable && latestSupported ? html`
                   <span class="text-xs text-blue-600 font-medium">Nova versão disponível</span>
+                ` : null}
+                ${updateAvailable && latestSupported && whatsappRecommended ? html`
+                  <span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                    Recomendada por compatibilidade
+                  </span>
                 ` : null}
                 ${updateAvailable && !latestSupported ? html`
                   <span class="text-xs text-amber-700 font-medium">Não homologada</span>
@@ -208,6 +214,18 @@ export function GowaSettings({ autoCheck, onAutoCheckChange, onNotify }) {
             </div>
           ` : null}
 
+          ${updateAvailable && latestSupported && info?.update_reason ? html`
+            <div class="mt-3 p-3 rounded-lg ${whatsappRecommended ? 'bg-blue-50 border-blue-200 text-blue-900' : 'bg-wa-panel border-wa-border text-wa-secondary'} border text-xs leading-relaxed">
+              <strong>${whatsappRecommended ? 'Análise de compatibilidade:' : 'Análise automática:'}</strong>
+              <span class="block mt-1">${info.update_reason}</span>
+              ${info?.assessment_error ? html`
+                <span class="block mt-1 text-amber-700">
+                  A LLM não pôde concluir a análise; foram aplicadas somente as regras locais.
+                </span>
+              ` : null}
+            </div>
+          ` : null}
+
           ${working ? html`
             <div class="mt-3">
               <div class="flex items-center justify-between text-xs text-wa-secondary mb-1.5">
@@ -250,7 +268,8 @@ export function GowaSettings({ autoCheck, onAutoCheckChange, onNotify }) {
           <span>
             <span class="text-sm text-wa-text">Verificar atualizações do GOWA diariamente</span>
             <span class="block text-xs text-wa-secondary">
-              Apenas avisa quando sair uma versão nova. A instalação sempre pede sua aprovação.
+              O alerta automático só aparece quando as notas indicam mudanças relevantes
+              para compatibilidade com o WhatsApp. Outras versões continuam disponíveis aqui.
             </span>
           </span>
         </label>
