@@ -33,6 +33,32 @@ logger = logging.getLogger(__name__)
 
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
+# Version sanitized for use in a filename / HTTP header. The manifest's own
+# ``_is_semver`` is NOT enough: its regex ends in ``(?:[-+].*)?``, so a build
+# tag carrying a quote or a newline would pass and poison Content-Disposition.
+_SAFE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$")
+
+
+def _export_filename(plugin_id: str, plugin_dir: Path) -> str:
+    """Export zip name: ``<id>-<version>-plugin.zip``.
+
+    Degrades to the legacy name (``<id>-plugin.zip``) whenever the version
+    cannot be read safely -- the download must never fail over its own name.
+
+    The broad ``except`` is deliberate: ``load_manifest`` also raises
+    ``ValueError`` when ``whatsbot_api_version`` is incompatible with the
+    running core, which is exactly the plugin an operator wants to export in
+    order to fix it elsewhere.
+    """
+    try:
+        version = (load_manifest(plugin_dir).version or "").strip()
+    except Exception:
+        return f"{plugin_id}-plugin.zip"
+    if not _SAFE_VERSION_RE.match(version):
+        return f"{plugin_id}-plugin.zip"
+    return f"{plugin_id}-{version}-plugin.zip"
+
+
 # Cap on the total UNCOMPRESSED size of an uploaded plugin zip (anti zip-bomb).
 _MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024  # 256 MiB
 
@@ -303,7 +329,7 @@ def register_routes(app, deps):
                 zf.write(path, arc)
         size = buf.getbuffer().nbytes
         buf.seek(0)
-        filename = f"{plugin_id}-plugin.zip"
+        filename = _export_filename(plugin_id, target)
         return StreamingResponse(
             buf,
             media_type="application/zip",

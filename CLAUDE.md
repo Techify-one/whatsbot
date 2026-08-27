@@ -704,7 +704,7 @@ Use o slash command `/new-plugin` no Claude Code. O comando lê os arquivos de r
 
 ### Importar/exportar
 
-- Export: `GET /api/plugins/<id>/export` retorna um `.zip` da pasta (excluindo `__pycache__/` e arquivos `.db`).
+- Export: `GET /api/plugins/<id>/export` retorna um `.zip` da pasta (excluindo `__pycache__/` e arquivos `.db`), nomeado `<id>-<versao>-plugin.zip` — cai em `<id>-plugin.zip` se o manifesto não for legível. O nome do arquivo NÃO participa do import, que lê o `id` do manifesto de dentro do zip.
 - Import: `POST /api/plugins/import` (multipart) valida o `plugin.yaml` na raiz, checa colisão de `id` e path traversal, extrai em `storages/plugins/<id>/`. Plugin importado fica `enabled=0` — usuário ativa pela UI.
 
 ## Migração de dados legados
