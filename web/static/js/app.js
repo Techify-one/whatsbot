@@ -358,14 +358,15 @@ function App({ onLogout, hasPassword }) {
   // (services/websocket.js) once the server is back up, which fires
   // onWsConnect again and re-runs this — that's the "server just restarted"
   // signal, and it doubles as the original boot check for a fresh page load
-  // (the first successful WS connection). The "already shown" flag lives
-  // server-side in WHATSBOT_VERSION.popup_shown (per installation, not per
-  // browser/device) — /release-up resets it to false on every version bump,
-  // and closing the modal flips it back to true, so a reconnect that isn't
-  // tied to a real update is a no-op. Covers every update path (painel, git
-  // pull, Coolify/Docker redeploy), not just the in-app "Atualizar" button.
-  // Only ever shows the entry for the version currently installed — not the
-  // full history — even if this install skipped several releases in between.
+  // (the first successful WS connection). `popup_shown` is computed
+  // server-side from a storages/ marker that ONLY the in-app "Atualizar"
+  // button ever writes (see _perform_update in server/routes/update.py) — so
+  // this only ever fires right after a manual self-update, never on a fresh
+  // install, a `git pull`, or a Coolify/Docker redeploy that just happens to
+  // bring a newer `version` along. Closing the modal clears that marker, so
+  // a reconnect afterwards is a no-op. Only ever shows the entry for the
+  // version currently installed — not the full history — even if this
+  // install skipped several releases in between.
   const checkWhatsNew = useCallback(() => {
     getLocalVersionInfo()
       .then(res => {

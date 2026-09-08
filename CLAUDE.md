@@ -259,25 +259,26 @@ próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](se
   aba do painel não recarrega sozinha — então o disparo real é a reconexão do WS depois que o servidor
   volta (`services/websocket.js` já reconecta sozinho a cada 3s), não o carregamento da página.
   `onWsConnect` cobre os dois casos com o mesmo código (a 1ª conexão de um boot novo TAMBÉM passa por
-  `onWsConnect`). O check é barato e idempotente (`popup_shown` no arquivo evita reexibir em reconexões
-  que não são de uma atualização real), então rodar em toda reconexão é seguro. Mostra **só a versão
-  atual**, mesmo que a
-  instalação tenha pulado várias releases (o histórico completo continua no arquivo/API, só não é
-  empilhado no popup). O controle de "já vi esse popup" é o campo `popup_shown` de nível superior no
-  próprio `WHATSBOT_VERSION` — **por instalação, não por navegador/dispositivo**: `/release-up` zera
-  pra `false` a cada bump de versão (ver [.claude/commands/release-up.md](.claude/commands/release-up.md)),
-  e fechar o modal chama `POST /api/update/popup-seen`, que reescreve o campo pra `true` no arquivo em
-  disco (só esse campo — `version`/`changelog` saem intactos). Isso evita o problema do design anterior
-  baseado em `localStorage`: uma flag que nasce vazia é indistinguível entre "instalação nova" e
-  "instalação antiga atualizando pela primeira vez desde que o recurso existe" — o antigo código tratava
-  os dois casos como "primeiro boot" e nunca mostrava o popup pra ninguém que já usava o app. Migrar pra
-  um campo no arquivo (que o self-update já sobrescreve a cada atualização real) resolve isso.
-  ⚠️ **Trade-off aceito conscientemente**: `WHATSBOT_VERSION` fica na raiz do repo, versionado pelo git —
-  em Coolify, cada deploy reconstrói o container a partir do git (só `storages/` é volume persistente),
-  então um redeploy da MESMA versão (restart, deploy não relacionado) reseta o arquivo pro que está
-  commitado e o popup pode reaparecer sem ter havido atualização de versão real. Se isso incomodar no
-  dia a dia, a alternativa é mover o estado mutável pra um arquivo em `storages/` (persistente em
-  Coolify e no self-update) e deixar `WHATSBOT_VERSION` só com metadado de release.
+  `onWsConnect`). Mostra **só a versão atual**, mesmo que a instalação tenha pulado várias releases (o
+  histórico completo continua no arquivo/API, só não é empilhado no popup).
+  **O popup só pode aparecer depois de um clique manual em "Atualizar" no painel** — nunca num boot
+  de instalação nova, `git pull`, ou redeploy do Coolify/Docker, mesmo que esses tragam uma `version`
+  mais nova. O gatilho é um marcador em `storages/update_popup.json` (`{"version": "..."}`), gitignored
+  e dentro de `PRESERVE_DIRS` — então nem o próprio self-update sobrescreve esse arquivo ao copiar os
+  arquivos da release. O ÚNICO lugar que escreve nele é `_perform_update()` em
+  [server/routes/update.py](server/routes/update.py), logo após
+  aplicar uma atualização — arma o marcador com a `version` recém-instalada. `_read_local_version()`
+  computa `popup_shown` comparando esse marcador com a `version` de `WHATSBOT_VERSION`: só é `false`
+  ("mostrar") quando os dois batem. Fechar o modal chama `POST /api/update/popup-seen`, que apaga o
+  marcador (por instalação, não por navegador/dispositivo — o estado não vive em `localStorage`).
+  **Por que não fica dentro de `WHATSBOT_VERSION`** (design anterior, com um campo `popup_shown` no
+  próprio arquivo, zerado pra `false` a cada bump pelo `/release-up`): esse arquivo é git-tracked e viaja
+  dentro do zip de toda release — então ele chega com `popup_shown: false` tanto pra quem clicou
+  "Atualizar" quanto pra quem só deu `git clone`/"Download ZIP" na tag mais nova, ou subiu um container
+  novo no Coolify. As duas situações ficavam indistinguíveis e o popup abria no primeiro boot de qualquer
+  instalação nova — não só em quem atualizou de verdade. Mover o estado pra `storages/` (que só o botão
+  "Atualizar" grava, e que sobrevive a `git pull`/redeploy por ser volume persistente e gitignored)
+  resolve isso: sem o clique manual, o marcador nunca existe, então o popup nunca dispara.
 - **Preserva `storages/statics/logs/venv/.git/bin` e `.env`** — mesma lista de diretórios/arquivos
   protegidos contra sobrescrita usada pelo update do GOWA para `bin/`.
 - **Requer restart manual**: o `POST /api/update` só troca os arquivos em disco; o processo Python
