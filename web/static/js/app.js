@@ -350,6 +350,35 @@ function App({ onLogout, hasPassword }) {
     }
   }, [config]);
 
+  // "What's new" check — local file only (no GitHub call), so it's safe to
+  // call often. Runs on every WS connect (see onWsConnect below), not just
+  // on mount: after a self-update the operator restarts the server manually,
+  // and this tab is never reloaded, so a mount-only check would never see
+  // the new version until a hard refresh. The WS client auto-reconnects
+  // (services/websocket.js) once the server is back up, which fires
+  // onWsConnect again and re-runs this — that's the "server just restarted"
+  // signal, and it doubles as the original boot check for a fresh page load
+  // (the first successful WS connection). The "already shown" flag lives
+  // server-side in WHATSBOT_VERSION.popup_shown (per installation, not per
+  // browser/device) — /release-up resets it to false on every version bump,
+  // and closing the modal flips it back to true, so a reconnect that isn't
+  // tied to a real update is a no-op. Covers every update path (painel, git
+  // pull, Coolify/Docker redeploy), not just the in-app "Atualizar" button.
+  // Only ever shows the entry for the version currently installed — not the
+  // full history — even if this install skipped several releases in between.
+  const checkWhatsNew = useCallback(() => {
+    getLocalVersionInfo()
+      .then(res => {
+        const d = res && res.ok && res.data;
+        if (!d || !d.version || d.version === '0.0.0' || d.popup_shown) return;
+        const changelog = Array.isArray(d.changelog) ? d.changelog : [];
+        const current = changelog.find(e => e.version === d.version) || changelog[0];
+        if (!current || !current.description) { markUpdatePopupSeen(); return; }
+        setWhatsNew({ version: d.version, description: current.description });
+      })
+      .catch(() => { /* ignore */ });
+  }, []);
+
   useWebSocket({
     onStatus: useCallback((data) => setStatus(data), []),
     onQrUpdate: useCallback((data) => {
@@ -392,7 +421,7 @@ function App({ onLogout, hasPassword }) {
       setNotification(data && data.message ? data.message : '');
       if (data && data.ok) setGowaUpdate(null);
     }, []),
-    onWsConnect: useCallback(() => setWsConnected(true), []),
+    onWsConnect: useCallback(() => { setWsConnected(true); checkWhatsNew(); }, [checkWhatsNew]),
     onWsDisconnect: useCallback(() => setWsConnected(false), []),
   });
 
@@ -440,27 +469,6 @@ function App({ onLogout, hasPassword }) {
           update_evidence: d.update_evidence,
           assessed_versions: d.assessed_versions,
         });
-      })
-      .catch(() => { /* ignore */ });
-  }, []);
-
-  // One-shot "what's new" check on boot — local file only (no GitHub call),
-  // so it's safe on every load. Covers every update path (painel, git pull,
-  // Coolify/Docker redeploy), not just the in-app "Atualizar" button. The
-  // "already shown" flag lives server-side in WHATSBOT_VERSION.popup_shown
-  // (per installation, not per browser/device) — /release-up resets it to
-  // false on every version bump, and closing the modal flips it back to true.
-  // Only ever shows the entry for the version currently installed — not the
-  // full history — even if this install skipped several releases in between.
-  useEffect(() => {
-    getLocalVersionInfo()
-      .then(res => {
-        const d = res && res.ok && res.data;
-        if (!d || !d.version || d.version === '0.0.0' || d.popup_shown) return;
-        const changelog = Array.isArray(d.changelog) ? d.changelog : [];
-        const current = changelog.find(e => e.version === d.version) || changelog[0];
-        if (!current || !current.description) { markUpdatePopupSeen(); return; }
-        setWhatsNew({ version: d.version, description: current.description });
       })
       .catch(() => { /* ignore */ });
   }, []);

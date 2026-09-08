@@ -253,8 +253,15 @@ próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](se
   `GET /api/update/check` é a exceção: vem direto do campo `body` da última release no GitHub (só a
   mais recente, usado na prévia da tela de Configurações antes de atualizar).
 - **Popup de novidades**: `GET /api/update/local-version` é só leitura local (sem chamar o GitHub),
-  chamado no boot do painel ([app.js](web/static/js/app.js)) pra mostrar o `WhatsNewModal` com a
-  entrada de `changelog` que casa com a `version` instalada — **só a versão atual**, mesmo que a
+  chamado a cada conexão do WebSocket ([app.js](web/static/js/app.js), `onWsConnect` →
+  `checkWhatsNew`) pra mostrar o `WhatsNewModal` com a entrada de `changelog` que casa com a
+  `version` instalada. Não é só um check de boot: o self-update exige restart manual do processo, e a
+  aba do painel não recarrega sozinha — então o disparo real é a reconexão do WS depois que o servidor
+  volta (`services/websocket.js` já reconecta sozinho a cada 3s), não o carregamento da página.
+  `onWsConnect` cobre os dois casos com o mesmo código (a 1ª conexão de um boot novo TAMBÉM passa por
+  `onWsConnect`). O check é barato e idempotente (`popup_shown` no arquivo evita reexibir em reconexões
+  que não são de uma atualização real), então rodar em toda reconexão é seguro. Mostra **só a versão
+  atual**, mesmo que a
   instalação tenha pulado várias releases (o histórico completo continua no arquivo/API, só não é
   empilhado no popup). O controle de "já vi esse popup" é o campo `popup_shown` de nível superior no
   próprio `WHATSBOT_VERSION` — **por instalação, não por navegador/dispositivo**: `/release-up` zera
