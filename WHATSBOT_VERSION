@@ -1,5 +1,6 @@
 {
   "version": "0.2.0",
+  "popup_shown": false,
   "changelog": [
     {
       "version": "0.2.0",

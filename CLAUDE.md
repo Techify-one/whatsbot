@@ -67,8 +67,8 @@ gowa/proxy.py        → proxy de saída da conexão do WhatsApp (validação, U
 server/routes/gowa_update.py → endpoints /api/gowa/* (versão, check, update, rollback, skip, proxy)
 bin/gowa.exe         → binário GOWA pré-compilado do Windows (não editar; atualizações vão pra storages/bin/)
 storages/bin/        → binário GOWA atualizado pelo painel (writable, persiste em Docker/Coolify)
-WHATSBOT_VERSION     → versão + changelog do WhatsBot que acompanha esta release (fonte única, bumpado pelo /release-up)
-server/routes/update.py → self-update do WhatsBot: /api/update/check, /api/update/local-version, /api/update
+WHATSBOT_VERSION     → versão + changelog + popup_shown do WhatsBot que acompanha esta release (fonte única, bumpado pelo /release-up)
+server/routes/update.py → self-update do WhatsBot: /api/update/check, /api/update/local-version, /api/update/popup-seen, /api/update
 ```
 
 ## Comandos
@@ -254,13 +254,23 @@ próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](se
   mais recente, usado na prévia da tela de Configurações antes de atualizar).
 - **Popup de novidades**: `GET /api/update/local-version` é só leitura local (sem chamar o GitHub),
   chamado no boot do painel ([app.js](web/static/js/app.js)) pra mostrar o `WhatsNewModal` com a
-  entrada de `changelog` que casa com a `version` instalada — **só a versão atual**, mesmo que aquele
-  navegador tenha pulado várias releases (o histórico completo continua no arquivo/API, só não é
-  empilhado no popup). O controle de "já vi esse popup" fica em `localStorage`
-  (`whatsbot_whats_new_seen_version`) — **não é persistido no banco nem no arquivo**, é por
-  navegador/dispositivo, mesmo padrão já usado pro snooze do aviso de saldo baixo e do update do GOWA.
-  No primeiro boot de um navegador (sem baseline pra comparar), só grava a versão atual como vista,
-  sem popup.
+  entrada de `changelog` que casa com a `version` instalada — **só a versão atual**, mesmo que a
+  instalação tenha pulado várias releases (o histórico completo continua no arquivo/API, só não é
+  empilhado no popup). O controle de "já vi esse popup" é o campo `popup_shown` de nível superior no
+  próprio `WHATSBOT_VERSION` — **por instalação, não por navegador/dispositivo**: `/release-up` zera
+  pra `false` a cada bump de versão (ver [.claude/commands/release-up.md](.claude/commands/release-up.md)),
+  e fechar o modal chama `POST /api/update/popup-seen`, que reescreve o campo pra `true` no arquivo em
+  disco (só esse campo — `version`/`changelog` saem intactos). Isso evita o problema do design anterior
+  baseado em `localStorage`: uma flag que nasce vazia é indistinguível entre "instalação nova" e
+  "instalação antiga atualizando pela primeira vez desde que o recurso existe" — o antigo código tratava
+  os dois casos como "primeiro boot" e nunca mostrava o popup pra ninguém que já usava o app. Migrar pra
+  um campo no arquivo (que o self-update já sobrescreve a cada atualização real) resolve isso.
+  ⚠️ **Trade-off aceito conscientemente**: `WHATSBOT_VERSION` fica na raiz do repo, versionado pelo git —
+  em Coolify, cada deploy reconstrói o container a partir do git (só `storages/` é volume persistente),
+  então um redeploy da MESMA versão (restart, deploy não relacionado) reseta o arquivo pro que está
+  commitado e o popup pode reaparecer sem ter havido atualização de versão real. Se isso incomodar no
+  dia a dia, a alternativa é mover o estado mutável pra um arquivo em `storages/` (persistente em
+  Coolify e no self-update) e deixar `WHATSBOT_VERSION` só com metadado de release.
 - **Preserva `storages/statics/logs/venv/.git/bin` e `.env`** — mesma lista de diretórios/arquivos
   protegidos contra sobrescrita usada pelo update do GOWA para `bin/`.
 - **Requer restart manual**: o `POST /api/update` só troca os arquivos em disco; o processo Python
@@ -439,7 +449,8 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 | DELETE | `/api/plugins/{id}` | Remove a pasta + tabelas `plugin_<id>_*` + settings namespaceadas |
 | POST | `/api/plugins/restart` | Restart manual do servidor |
 | GET | `/api/update/check` | Compara `WHATSBOT_VERSION` local com a última release no GitHub (`current_version`, `latest_version`, `update_available`, changelogs) |
-| GET | `/api/update/local-version` | Só lê `WHATSBOT_VERSION` local (sem chamar o GitHub) — usado pelo popup de novidades no boot do painel |
+| GET | `/api/update/local-version` | Só lê `WHATSBOT_VERSION` local (sem chamar o GitHub) — usado pelo popup de novidades no boot do painel. Inclui `popup_shown` |
+| POST | `/api/update/popup-seen` | Marca `popup_shown: true` no `WHATSBOT_VERSION` em disco (por instalação, não por navegador) — chamado ao fechar o `WhatsNewModal` |
 | POST | `/api/update` | Baixa o `.zip` da **tag** da última release (não o `main`) e sobrescreve os arquivos, preservando `storages/statics/logs/venv/.git/bin` e `.env`. Requer restart manual pra aplicar |
 | GET | `/api/gowa/version` | Versão do GOWA em uso, origem (`bundled`/`managed`/`env`), se há backup pra reverter |
 | GET | `/api/gowa/update/check?force=1` | Consulta a última release no GitHub (cache 1h) + se está na faixa homologada |

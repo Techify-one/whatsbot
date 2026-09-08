@@ -371,6 +371,10 @@ export async function performUpdate() {
   return request('POST', '/api/update');
 }
 
+export async function markUpdatePopupSeen() {
+  return request('POST', '/api/update/popup-seen');
+}
+
 // ── GOWA (motor do WhatsApp) ──────────────────────────────────────
 
 export async function getGowaVersion() {

@@ -6,17 +6,19 @@ Crie uma nova release do WhatsBot no GitHub seguindo estes passos:
 4. Gere o changelog automático: liste os commits desde a última tag de release (`git log <última_tag>..HEAD --oneline --no-merges`). Se não houver tag anterior, use os últimos 20 commits
 5. Atualize o arquivo `WHATSBOT_VERSION` (JSON na raiz, lido por `/api/update` no self-update do painel):
    - Troque o campo `"version"` de nível superior para a nova versão
+   - Zere o campo `"popup_shown"` de nível superior para `false` — é a flag que controla se o popup de novidades já apareceu para essa instalação; toda versão nova nasce "não mostrada"
    - **Adicione** (não substitua) uma nova entrada no INÍCIO da lista `"changelog"`, com a nova versão e uma descrição enxuta (bullets em texto puro, sem markdown) baseada no changelog do passo 4. As entradas de versões anteriores continuam no array — é esse histórico acumulado que alimenta o popup de novidades quando alguém pula várias releases de uma vez
    ```json
    {
      "version": "{nova_versão}",
+     "popup_shown": false,
      "changelog": [
        { "version": "{nova_versão}", "description": "- item 1\n- item 2\n..." },
        { "version": "{versão_anterior}", "description": "..." }
      ]
    }
    ```
-   Esse arquivo viaja dentro do zip da tag — é ele que o botão "Atualizar" do painel usa para saber a versão instalada e mostrar o popup de novidades após o usuário atualizar. **Sempre bumpe junto com a tag**, senão o self-update para de refletir a versão real.
+   Esse arquivo viaja dentro do zip da tag — é ele que o botão "Atualizar" do painel usa para saber a versão instalada e mostrar o popup de novidades após o usuário atualizar. **Sempre bumpe junto com a tag**, senão o self-update para de refletir a versão real. **Não esqueça o `popup_shown: false`** — esquecer deixa o arquivo com o valor `true` da release anterior (já commitado), e o popup nunca aparece para quem atualizar para essa versão.
 6. Faça commit de `WHATSBOT_VERSION` junto com qualquer outra mudança pendente (git add + commit com mensagem descritiva, ex: `chore(release): bump WHATSBOT_VERSION para {nova_versão}`)
 7. Push para origin e upstream na branch main
 8. Crie a release no GitHub via `gh release create`, apontando para o commit que acabou de subir (que já contém o `WHATSBOT_VERSION` bumpado):

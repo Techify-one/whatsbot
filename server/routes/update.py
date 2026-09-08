@@ -39,7 +39,12 @@ def _read_local_version(project_root: Path) -> dict:
     always reports "0.0.0".
 
     `changelog` is newest-first: `changelog[0]` is always the entry for the
-    installed `version`.
+    installed `version`. `popup_shown` tracks (per this installation, not per
+    browser) whether the "what's new" popup was already dismissed for
+    `version` — /release-up resets it to `false` on every bump; missing it
+    entirely (file predates this field) is treated as `false` too, so an
+    install updating for the first time since this field was introduced still
+    gets shown the popup once instead of silently skipping it.
     """
     path = project_root / VERSION_FILENAME
     try:
@@ -50,10 +55,34 @@ def _read_local_version(project_root: Path) -> dict:
             if isinstance(e, dict)
         ]
         version = str(data.get("version") or (changelog[0]["version"] if changelog else "0.0.0"))
-        return {"version": version, "changelog": changelog}
+        popup_shown = bool(data.get("popup_shown", False))
+        return {"version": version, "changelog": changelog, "popup_shown": popup_shown}
     except Exception as exc:
         logger.debug("Failed to read %s: %s", VERSION_FILENAME, exc)
-        return {"version": "0.0.0", "changelog": []}
+        return {"version": "0.0.0", "changelog": [], "popup_shown": True}
+
+
+def _mark_popup_shown(project_root: Path) -> dict:
+    """Flip `popup_shown` to True in WHATSBOT_VERSION, in place.
+
+    Runs on this installation's own copy of the file (self-update already
+    overwrites the whole file with the new release's, `popup_shown: false`
+    included) — so this is per-installation state, not per-browser. Only
+    `popup_shown` is touched; `version`/`changelog` are written back exactly
+    as read.
+    """
+    path = project_root / VERSION_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read %s to mark popup as shown: %s", VERSION_FILENAME, exc)
+        return _read_local_version(project_root)
+    data["popup_shown"] = True
+    try:
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to write %s to mark popup as shown: %s", VERSION_FILENAME, exc)
+    return _read_local_version(project_root)
 
 
 def _fetch_latest_release() -> dict:
@@ -189,6 +218,14 @@ def register_routes(app, deps):
         # show everything a user missed if they skipped several releases.
         project_root = _get_project_root(settings)
         info = await asyncio.to_thread(_read_local_version, project_root)
+        return _ok(info)
+
+    @app.post("/api/update/popup-seen")
+    async def mark_popup_seen():
+        # Flips popup_shown to true in WHATSBOT_VERSION so the "what's new"
+        # popup is shown once per installation (not per browser/device).
+        project_root = _get_project_root(settings)
+        info = await asyncio.to_thread(_mark_popup_shown, project_root)
         return _ok(info)
 
     @app.post("/api/update")
