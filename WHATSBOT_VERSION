@@ -1,6 +1,10 @@
 {
-  "version": "0.1.1",
+  "version": "0.2.0",
   "changelog": [
+    {
+      "version": "0.2.0",
+      "description": "- Provider de IA trocado do OpenRouter direto para o proxy Techify, com wizard de 1a execucao que provisiona a chave automaticamente via WhatsApp\n- Motor de agente reescrito sobre o AGNO\n- GOWA: atualizacao do binario pelo painel sem rebuild, com rollback automatico, e proxy de saida dedicado (SOCKS5/HTTP) para a conexao do WhatsApp\n- Atualizacao do proprio WhatsBot: o botao \"Atualizar\" em Configuracoes agora baixa a versao estavel da release publicada (nao mais o main) e mostra um popup de novidades apos atualizar\n- Painel: modo escuro, fotos de perfil, @mencoes em grupos, reacoes, citar/apagar mensagem, fixar conversa, anexar qualquer arquivo, legenda em imagem/documento\n- Sandbox reformulado como chat completo com suporte a midia (imagem, audio, documento)\n- Aviso de saldo baixo com link de recarga\n- Qualidade da IA: guard contra vazamento de tool-call cru (DSML), analise de melhoria de respostas marcadas como incorretas, reconhecimento/transcricao de documentos (PDF, DOCX, texto)\n- Plugins: auto-cura e validador de dependencias pip, portabilidade Postgres (AUTOINCREMENT, delete seguro por FK), atualizacao de plugin preservando dados e migrations. Apenas lembretes continua bundled - demais exemplos foram para a Loja de Plugins"
+    },
     {
       "version": "0.1.1",
       "description": "- Sistema de plugins: event bus + filter pipeline completo em todo o pipeline de mensagens, com cobertura completa de filters/events\n- 9 novos media types suportados no webhook: video, sticker, document, location, poll, interactive, order, product e contacts\n- Plugin event_logger - logging de eventos em tempo real + REST API\n- Plugin auto_signature - settings declarativas + filtro por source\n- Separadores de data no historico de mensagens\n- Toggles \"IA le\" e \"IA responde no chat\" em mensagens privadas\n- Tela de execucoes expande eventos por padrao\n- Correcoes de webhook (transcricao em grupo, roteamento por chat_id, typing_state) e configs em Docker Swarm"
