@@ -13,9 +13,10 @@ import { ToolsManager } from './components/ToolsManager.js';
 import { SetupWizard } from './components/SetupWizard.js';
 import { LowBalanceModal } from './components/LowBalanceModal.js';
 import { GowaUpdateModal } from './components/GowaUpdateModal.js';
+import { WhatsNewModal } from './components/WhatsNewModal.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { useConfig } from './hooks/useConfig.js';
-import { checkAuth, authHeaders, getUnreadCount, installGowaUpdate, skipGowaVersion } from './services/api.js';
+import { checkAuth, authHeaders, getUnreadCount, installGowaUpdate, skipGowaVersion, getLocalVersionInfo } from './services/api.js';
 import { playTransferAlert } from './utils/alertSound.js';
 import { getNotifPref, playNotificationSound, showBrowserNotification } from './utils/notifications.js';
 
@@ -47,6 +48,18 @@ function snoozeGowaUpdate(ms) {
   try {
     localStorage.setItem(GOWA_UPDATE_SNOOZE_KEY, String(Date.now() + ms));
   } catch {}
+}
+
+// Per-browser flag (never sent to the server/DB) for whether the "what's new"
+// popup was already shown for a given installed version.
+const WHATS_NEW_SEEN_KEY = 'whatsbot_whats_new_seen_version';
+
+function getSeenWhatsNewVersion() {
+  try { return localStorage.getItem(WHATS_NEW_SEEN_KEY) || ''; } catch { return ''; }
+}
+
+function markWhatsNewSeen(version) {
+  try { localStorage.setItem(WHATS_NEW_SEEN_KEY, version); } catch {}
 }
 
 const html = htm.bind(h);
@@ -273,6 +286,7 @@ function App({ onLogout, hasPassword }) {
   const [groupParticipantsChanged, setGroupParticipantsChanged] = useState(null);
   const [lowBalance, setLowBalance] = useState(null);
   const [gowaUpdate, setGowaUpdate] = useState(null);
+  const [whatsNew, setWhatsNew] = useState(null);
   const [gowaProgress, setGowaProgress] = useState(null);
   const [gowaInstalling, setGowaInstalling] = useState(false);
   const [initialContactId, setInitialContactId] = useState(contactIdFromPath);
@@ -438,6 +452,34 @@ function App({ onLogout, hasPassword }) {
           update_evidence: d.update_evidence,
           assessed_versions: d.assessed_versions,
         });
+      })
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  // One-shot "what's new" check on boot — local file only (no GitHub call),
+  // so it's safe on every load. Covers every update path (painel, git pull,
+  // Coolify/Docker redeploy), not just the in-app "Atualizar" button, since it
+  // just compares the installed WHATSBOT_VERSION to what this browser has
+  // already seen (tracked in localStorage, never sent to the server/DB).
+  // Only ever shows the entry for the version currently installed — not the
+  // full history — even if this browser skipped several releases in between.
+  useEffect(() => {
+    getLocalVersionInfo()
+      .then(res => {
+        const d = res && res.ok && res.data;
+        if (!d || !d.version || d.version === '0.0.0') return;
+        const seen = getSeenWhatsNewVersion();
+        if (seen === d.version) return;
+        if (!seen) {
+          // First time this browser ever opens the panel — nothing to diff
+          // against, so just record the baseline instead of showing a popup.
+          markWhatsNewSeen(d.version);
+          return;
+        }
+        const changelog = Array.isArray(d.changelog) ? d.changelog : [];
+        const current = changelog.find(e => e.version === d.version) || changelog[0];
+        if (!current || !current.description) { markWhatsNewSeen(d.version); return; }
+        setWhatsNew({ version: d.version, description: current.description });
       })
       .catch(() => { /* ignore */ });
   }, []);
@@ -655,6 +697,12 @@ function App({ onLogout, hasPassword }) {
         onUpdateNow=${handleGowaUpdateNow}
         onLater=${() => { snoozeGowaUpdate(24 * 60 * 60 * 1000); setGowaUpdate(null); }}
         onSkip=${handleGowaSkip}
+      />` : null}
+
+      ${whatsNew ? html`<${WhatsNewModal}
+        version=${whatsNew.version}
+        description=${whatsNew.description}
+        onClose=${() => { markWhatsNewSeen(whatsNew.version); setWhatsNew(null); }}
       />` : null}
     </div>
   `;

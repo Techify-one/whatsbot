@@ -363,6 +363,10 @@ export async function checkForUpdates() {
   return request('GET', '/api/update/check');
 }
 
+export async function getLocalVersionInfo() {
+  return request('GET', '/api/update/local-version');
+}
+
 export async function performUpdate() {
   return request('POST', '/api/update');
 }

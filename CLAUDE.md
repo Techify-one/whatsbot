@@ -67,6 +67,8 @@ gowa/proxy.py        → proxy de saída da conexão do WhatsApp (validação, U
 server/routes/gowa_update.py → endpoints /api/gowa/* (versão, check, update, rollback, skip, proxy)
 bin/gowa.exe         → binário GOWA pré-compilado do Windows (não editar; atualizações vão pra storages/bin/)
 storages/bin/        → binário GOWA atualizado pelo painel (writable, persiste em Docker/Coolify)
+WHATSBOT_VERSION     → versão + changelog do WhatsBot que acompanha esta release (fonte única, bumpado pelo /release-up)
+server/routes/update.py → self-update do WhatsBot: /api/update/check, /api/update/local-version, /api/update
 ```
 
 ## Comandos
@@ -228,6 +230,45 @@ Pontos-chave da integração:
 - **Transcrição/descrição de mídia** continuam em chamadas diretas ao cliente OpenAI no handler (não são agênticas) — o cliente OpenAI segue vivo só para isso e para `test_api_key`.
 
 O motor roda **sempre um `Agent` único**. A base extensível para configurar agentes via banco (prompt/modelo/tools lidos do DB) é a infra `ai_agents` + [agent/agent_factory.py](agent/agent_factory.py), ligada por `ai_engine_enabled` — também single-agent.
+
+## Atualização do WhatsBot (self-update)
+
+Diferente da atualização do GOWA (binário, com verificação de SHA-256 e rollback automático — ver
+próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](server/routes/update.py))
+é mais simples: sobrescreve os arquivos de código com o conteúdo da última release do GitHub.
+
+- **Versão local**: lida de `WHATSBOT_VERSION` na raiz (JSON `{"version", "changelog": [{"version",
+  "description"}, ...]}`), nunca de `git describe`. Isso importa porque instalações via "Download ZIP"
+  do GitHub (o fluxo mais comum pra quem não usa git) não têm pasta `.git` — `git describe` falharia
+  sempre e travaria a versão exibida em `"0.0.0"`. Ler de um arquivo tracked funciona igual em git
+  clone, ZIP ou Docker.
+- **Download é sempre da tag da release**, nunca do `main` — `POST /api/update` busca a última release
+  via `GITHUB_RELEASES_API`, pega o `tag_name` e baixa `archive/refs/tags/{tag}.zip`. A branch `main`
+  pode estar à frente da última release; o self-update só deve entregar o que já foi publicado como
+  estável.
+- **`changelog` é uma lista acumulada, mais recente primeiro** (`changelog[0]` é sempre a entrada da
+  `version` instalada) — o `/release-up` **adiciona** uma entrada no início a cada release, nunca
+  substitui as anteriores. Isso deixa o histórico completo disponível localmente, sem precisar de
+  rede, mesmo pra quem pulou várias releases de uma vez. `latest_description` em
+  `GET /api/update/check` é a exceção: vem direto do campo `body` da última release no GitHub (só a
+  mais recente, usado na prévia da tela de Configurações antes de atualizar).
+- **Popup de novidades**: `GET /api/update/local-version` é só leitura local (sem chamar o GitHub),
+  chamado no boot do painel ([app.js](web/static/js/app.js)) pra mostrar o `WhatsNewModal` com a
+  entrada de `changelog` que casa com a `version` instalada — **só a versão atual**, mesmo que aquele
+  navegador tenha pulado várias releases (o histórico completo continua no arquivo/API, só não é
+  empilhado no popup). O controle de "já vi esse popup" fica em `localStorage`
+  (`whatsbot_whats_new_seen_version`) — **não é persistido no banco nem no arquivo**, é por
+  navegador/dispositivo, mesmo padrão já usado pro snooze do aviso de saldo baixo e do update do GOWA.
+  No primeiro boot de um navegador (sem baseline pra comparar), só grava a versão atual como vista,
+  sem popup.
+- **Preserva `storages/statics/logs/venv/.git/bin` e `.env`** — mesma lista de diretórios/arquivos
+  protegidos contra sobrescrita usada pelo update do GOWA para `bin/`.
+- **Requer restart manual**: o `POST /api/update` só troca os arquivos em disco; o processo Python
+  em execução continua rodando o código antigo até reiniciar (ao contrário do GOWA, que já reinicia
+  o subprocess sozinho).
+- **`/release-up` é responsável por bumpar `WHATSBOT_VERSION`** antes de criar a tag — ver
+  [.claude/commands/release-up.md](.claude/commands/release-up.md). Esquecer esse passo deixa o
+  self-update reportando uma versão desatualizada mesmo depois de uma release nova.
 
 ## Atualização do GOWA
 
@@ -397,6 +438,9 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 | POST | `/api/plugins/import` | Importa um plugin via upload de `.zip` |
 | DELETE | `/api/plugins/{id}` | Remove a pasta + tabelas `plugin_<id>_*` + settings namespaceadas |
 | POST | `/api/plugins/restart` | Restart manual do servidor |
+| GET | `/api/update/check` | Compara `WHATSBOT_VERSION` local com a última release no GitHub (`current_version`, `latest_version`, `update_available`, changelogs) |
+| GET | `/api/update/local-version` | Só lê `WHATSBOT_VERSION` local (sem chamar o GitHub) — usado pelo popup de novidades no boot do painel |
+| POST | `/api/update` | Baixa o `.zip` da **tag** da última release (não o `main`) e sobrescreve os arquivos, preservando `storages/statics/logs/venv/.git/bin` e `.env`. Requer restart manual pra aplicar |
 | GET | `/api/gowa/version` | Versão do GOWA em uso, origem (`bundled`/`managed`/`env`), se há backup pra reverter |
 | GET | `/api/gowa/update/check?force=1` | Consulta a última release no GitHub (cache 1h) + se está na faixa homologada |
 | POST | `/api/gowa/update` | Baixa, verifica o SHA-256, troca o binário e reinicia. Body `{version?, force_unsupported?}`. 409 se já houver update rodando |
