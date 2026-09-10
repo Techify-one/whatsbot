@@ -78,7 +78,7 @@ _ENV_OVERRIDES_BY_KEY: dict[str, tuple[str, Callable[[str], Any]]] = {
 
 DEFAULT_CONFIG = {
     "openrouter_api_key": "",
-    "model": "deepseek/deepseek-v4-pro",
+    "model": "deepseek/deepseek-v4.1-flash",
     # Model used by the "sugerir melhoria" analysis (non-agentic). Empty string
     # → falls back to the chat ``model``.
     "improvement_model": "",

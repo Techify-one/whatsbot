@@ -191,7 +191,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
 
   async function handleSave() {
     const data = {
-      model: model.trim() || 'deepseek/deepseek-v4-pro',
+      model: model.trim() || 'deepseek/deepseek-v4.1-flash',
       improvement_model: improvementModel.trim(),
       system_prompt: systemPrompt,
       auto_reply: autoReply,
@@ -331,7 +331,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
           <${ModelSelect}
             value=${model}
             onChange=${setModel}
-            placeholder="deepseek/deepseek-v4-pro"
+            placeholder="deepseek/deepseek-v4.1-flash"
           />
         </div>
 

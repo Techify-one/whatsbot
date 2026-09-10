@@ -36,7 +36,7 @@ def register_routes(app, deps):
     async def get_config():
         return _ok({
             "openrouter_api_key": _mask_key(settings.get("openrouter_api_key", "")),
-            "model": settings.get("model", "deepseek/deepseek-v4-pro"),
+            "model": settings.get("model", "deepseek/deepseek-v4.1-flash"),
             "improvement_model": settings.get("improvement_model", ""),
             "audio_model": settings.get("audio_model", "google/gemini-2.5-flash"),
             "image_model": settings.get("image_model", "google/gemini-2.5-flash"),
@@ -119,7 +119,7 @@ def register_routes(app, deps):
         agent_handler.update_config(
             api_key=settings.get("openrouter_api_key", ""),
             system_prompt=settings.get("system_prompt", ""),
-            model=settings.get("model", "deepseek/deepseek-v4-pro"),
+            model=settings.get("model", "deepseek/deepseek-v4.1-flash"),
             improvement_model=settings.get("improvement_model", ""),
             audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
             image_model=settings.get("image_model", "google/gemini-2.5-flash"),
@@ -151,7 +151,7 @@ def register_routes(app, deps):
             agent_handler.update_config(
                 api_key=api_key,
                 system_prompt=settings.get("system_prompt", ""),
-                model=settings.get("model", "deepseek/deepseek-v4-pro"),
+                model=settings.get("model", "deepseek/deepseek-v4.1-flash"),
                 audio_model=settings.get("audio_model", "google/gemini-2.5-flash"),
                 image_model=settings.get("image_model", "google/gemini-2.5-flash"),
                 document_model=settings.get("document_model", "google/gemini-2.5-flash"),

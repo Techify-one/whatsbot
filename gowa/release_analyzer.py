@@ -176,7 +176,7 @@ def _call_llm(settings, installed: str, latest: str,
         return None
     model = str(
         _setting_get(settings, "improvement_model", "")
-        or _setting_get(settings, "model", "deepseek/deepseek-v4-pro")
+        or _setting_get(settings, "model", "deepseek/deepseek-v4.1-flash")
     ).strip()
     if not model:
         return None
@@ -227,7 +227,7 @@ def assess_update(settings, *, installed: str, latest: str,
     release_text, commit_text = _context_text(releases, commits)
     model = str(
         _setting_get(settings, "improvement_model", "")
-        or _setting_get(settings, "model", "deepseek/deepseek-v4-pro")
+        or _setting_get(settings, "model", "deepseek/deepseek-v4.1-flash")
     )
     fingerprint_payload = json.dumps({
         "prompt": _PROMPT_VERSION,

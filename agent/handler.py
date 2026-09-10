@@ -94,7 +94,7 @@ class AgentHandler:
         system_prompt: str,
         max_context_messages: int = 10,
         inactivity_timeout_min: int = 30,
-        model: str = "deepseek/deepseek-v4-pro",
+        model: str = "deepseek/deepseek-v4.1-flash",
         improvement_model: str = "",
         audio_model: str = "google/gemini-2.5-flash",
         image_model: str = "google/gemini-2.5-flash",
