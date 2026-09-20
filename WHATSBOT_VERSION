@@ -1,6 +1,10 @@
 {
-  "version": "0.2.6",
+  "version": "0.2.7",
   "changelog": [
+    {
+      "version": "0.2.7",
+      "description": "- A criação de plugins continua no servidor ao sair da tela ou fechar o navegador, com recuperação do andamento ao voltar\n- A oferta Sim, instalar permanece salva na conversa depois da validação\n- Pedidos escritos como “instale por favor” agora instalam diretamente pelo backend, sem depender da resposta do modelo\n- Instalações e atualizações registram o resultado na conversa, preservam os dados e mantêm backup para restauração"
+    },
     {
       "version": "0.2.6",
       "description": "- Criador de plugins mais eficiente com DeepSeek 4.1 Flash e Gemini 3.8 Flash, começando a implementação sem pesquisas repetitivas\n- Telas de plugins agora seguem requisitos de largura, organização, responsividade, contraste e temas claro e escuro\n- Validação automática ganhou testes isolados, verificação visual e correção assistida antes da instalação do plugin\n- Ferramentas do Agno agora expõem instruções completas para melhorar a confiabilidade de modelos mais simples"

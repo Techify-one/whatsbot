@@ -19,12 +19,13 @@ from db import init_db  # noqa: E402
 
 init_db(tmp / "whatsbot.db")
 
-from db.repositories import chat_repo  # noqa: E402
+from db.repositories import chat_repo, plugin_repo  # noqa: E402
 from plugins.context import get_plugin_setting, send_whatsapp_message, set_runtime  # noqa: E402
 from server.routes.chat import (  # noqa: E402
     _STREAM_HEARTBEAT,
     _format_discovery_response,
     _ensure_system_help_link,
+    _is_install_confirmation,
     _is_plugin_intent,
     _safe_workspace_file,
     _scaffold_plugin_workspace,
@@ -94,6 +95,11 @@ def test_plugin_creator_guide_is_loaded_into_the_prompt():
     assert "Contrato de qualidade visual" in guide
     assert "1366×768" in guide and "360×800" in guide
     assert "max-w-5xl mx-auto text-wa-text" not in guide
+    assert "Sim, instalar" in guide
+    assert _is_install_confirmation("instale por favor")
+    assert _is_install_confirmation("Sim, pode instalar o plugin.")
+    assert _is_install_confirmation("pode atualizar")
+    assert not _is_install_confirmation("como eu instalo um plugin?")
 
 
 def test_frontend_quality_rejects_old_narrow_screen_and_accepts_responsive_screen():
@@ -665,6 +671,42 @@ def test_chat_api_and_streaming_without_external_services():
             assert len(actions) == 1
             assert actions[0]["metadata"]["status"] == "completed"
 
+            # Closing the HTTP stream must detach only the viewer. The plugin
+            # run continues in the server, persists its answer and leaves a
+            # durable installation offer for the next page load.
+            background_workspace = _plugin_dir("background_chat")
+            background_project = chat_repo.create_project(
+                "Background Chat", "plugin", "background_chat", str(background_workspace)
+            )
+            background_conversation = chat_repo.create_conversation(
+                background_project["id"], "provider/model",
+            )
+            background_response = await endpoint(
+                "/api/chat/conversations/{conversation_id}/messages", "POST"
+            )(
+                background_conversation["id"],
+                {"content": "Crie uma demonstração simples"},
+                FakeRequest(),
+            )
+            iterator = background_response.body_iterator
+            first_chunk = await anext(iterator)
+            assert json.loads(first_chunk)["event"] == "run_started"
+            await iterator.aclose()
+            for _ in range(100):
+                if background_conversation["id"] not in chat_routes._active_conversation_runs:
+                    break
+                await asyncio.sleep(0.01)
+            assert background_conversation["id"] not in chat_routes._active_conversation_runs
+            background_messages = chat_repo.list_messages(background_conversation["id"])
+            assert any(
+                message["kind"] == "message" and message["role"] == "assistant"
+                for message in background_messages
+            )
+            background_offer = next(
+                message for message in background_messages if message["kind"] == "install_offer"
+            )
+            assert background_offer["metadata"]["status"] == "pending"
+
             redirected_response = await endpoint(
                 "/api/chat/projects/{project_id}/conversations", "POST"
             )(system["id"], {"model": "provider/model"})
@@ -703,9 +745,48 @@ def test_chat_api_and_streaming_without_external_services():
             install_project = chat_repo.create_project(
                 "Install Chat", "plugin", "install_chat", str(workspace)
             )
+            install_conversation = chat_repo.create_conversation(
+                install_project["id"], "provider/model",
+            )
+            offer = chat_repo.add_message(
+                install_conversation["id"], "assistant", "", kind="install_offer",
+                metadata={
+                    "plugin_id": "install_chat", "version": "1.0.0",
+                    "tests": 0, "installed": False, "status": "pending",
+                },
+            )
+            reopened = await endpoint(
+                "/api/chat/conversations/{conversation_id}", "GET"
+            )(install_conversation["id"])
+            reopened_offer = next(
+                message for message in reopened["data"]["messages"]
+                if message["kind"] == "install_offer"
+            )
+            assert reopened_offer["metadata"]["status"] == "pending"
+            calls_before_install = len(build_calls)
+            install_stream = await endpoint(
+                "/api/chat/conversations/{conversation_id}/messages", "POST"
+            )(
+                install_conversation["id"],
+                {"content": "Sim, pode instalar o plugin."},
+                FakeRequest(),
+            )
+            install_chunks = []
+            async for chunk in install_stream.body_iterator:
+                install_chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+            install_events = [
+                json.loads(line)
+                for line in "".join(install_chunks).splitlines() if line
+            ]
+            assert any(event["event"] == "install_completed" for event in install_events)
+            assert len(build_calls) == calls_before_install
+            assert plugin_repo.get("install_chat") is not None
+            installed_messages = chat_repo.list_messages(install_conversation["id"])
+            resolved_offer = next(message for message in installed_messages if message["id"] == offer["id"])
+            assert resolved_offer["metadata"]["status"] == "installed"
+            assert installed_messages[-1]["content"].startswith("Plugin instalado com sucesso")
+
             install_endpoint = endpoint("/api/chat/projects/{project_id}/install", "POST")
-            first_install = await install_endpoint(install_project["id"], {})
-            assert first_install["ok"] is True and first_install["data"]["updated"] is False
             with get_engine().begin() as connection:
                 connection.execute(sa_text(
                     "INSERT INTO plugin_install_chat_items (name) VALUES ('preservar')"

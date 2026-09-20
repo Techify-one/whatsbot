@@ -450,6 +450,19 @@ vem em `high` e pode gastar toda a saída antes da primeira tool; modelos com ra
 ao workspace: diagnóstico não pode vasculhar executáveis, ambientes virtuais ou arquivos do host.
 O runner simples de `test_*.py` também roda em processo e banco temporários; nunca execute testes gerados
 contra o banco real, pois repetições de validação deixariam dados e causariam falhas falsas.
+Depois de uma validação bem-sucedida, a rota persiste uma mensagem `kind=install_offer`; não deixe a oferta
+somente no stream, porque `openConversation()` recarrega o histórico ao terminar a execução. O frontend
+reconstrói o card **Sim, instalar** a partir da oferta pendente. O clique no card e frases explícitas como
+“instale por favor” chamam o instalador determinístico do backend, sem delegar a instalação ao LLM. Ao
+concluir, a oferta é marcada como `installed`/`updated`, a mensagem de sucesso é persistida e o reinício é
+agendado. Não oriente a pessoa a procurar um plugin ainda não instalado na página Plugins.
+O streaming HTTP é apenas uma assinatura visual. `POST .../messages` cria uma task em
+`_background_chat_tasks`, e essa task consome o agente e persiste ações/resposta mesmo se o navegador
+desconectar. Nunca volte a cancelar o agente por `request.is_disconnected()`. A execução ativa fica em
+`_active_conversation_runs`; `GET .../activity` permite que uma conversa reaberta recupere mensagens e
+estado por polling. Fechar/trocar a tela deve abortar somente o `fetch` do frontend. Cancelamento explícito
+pelo botão continua usando `POST /api/chat/runs/{run_id}/cancel`. Esse estado ativo é por processo: um
+reinício do WhatsBot encerra tarefas em curso, mas fechar o navegador não.
 
 ## Fotos de perfil (avatars)
 

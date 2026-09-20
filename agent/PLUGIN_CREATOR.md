@@ -19,7 +19,10 @@ não estiver aqui. Faça busca direcionada, leia somente o trecho necessário e 
 6. Crie testes simples para regras importantes quando fizer sentido.
 7. Chame `validate_plugin_project`. Corrija todos os erros de backend e frontend e valide novamente até
    retornar `valid: true`.
-8. Responda com um resumo curto do que foi criado e testado. A instalação acontece depois, pelo botão da interface.
+8. Responda com um resumo curto do que foi criado e testado. Diga que o WhatsBot exibirá a opção
+   **Sim, instalar**. O usuário também pode autorizar escrevendo “instale por favor” no próprio chat; o
+   WhatsBot fará a instalação diretamente. Não mande o usuário procurar o plugin na página Plugins antes
+   de ele ser instalado.
 
 Num projeto novo, comece escrevendo os arquivos usando esta referência; não leia o esqueleto nem pesquise
 exemplos antes da primeira escrita. Se uma ferramenta devolver erro de argumentos ou formatação, corrija a chamada e tente novamente.

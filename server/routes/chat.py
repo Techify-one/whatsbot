@@ -47,11 +47,18 @@ _CHAT_HEARTBEAT_SECONDS = 15
 _STREAM_HEARTBEAT = object()
 _SCAFFOLD_MARKER = ".whatsbot-scaffold"
 _active_agents: dict[str, object] = {}
+_active_conversation_runs: dict[str, dict] = {}
+_background_chat_tasks: set[asyncio.Task] = set()
 _project_locks: dict[str, asyncio.Lock] = {}
 _PLUGIN_INTENT_RE = re.compile(
     r"(?:\b(?:criar|fazer|montar|desenvolver|alterar|editar|atualizar|modificar)\b.{0,100}\bplugin\b)"
     r"|(?:\bplugin\b.{0,100}\b(?:criar|fazer|montar|desenvolver|alterar|editar|atualizar|modificar)\b)",
     re.IGNORECASE | re.DOTALL,
+)
+_INSTALL_CONFIRM_RE = re.compile(
+    r"^\s*(?:sim[,.!]?\s*)?(?:por\s+favor[,.]?\s*)?(?:pode\s+)?(?:instale|instalar|instala|faça\s+a\s+instalação|"
+    r"quero\s+instalar|atualize|atualizar|atualiza)(?:\s+(?:o\s+)?plugin)?(?:\s+por\s+favor)?[.!]?\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -106,6 +113,22 @@ def _ensure_system_help_link(user_content: str, assistant_text: str, base_url: s
 
 def _is_plugin_intent(content: str) -> bool:
     return bool(_PLUGIN_INTENT_RE.search(content or ""))
+
+
+def _is_install_confirmation(content: str) -> bool:
+    """Recognize an explicit request to install/update the current plugin."""
+    return bool(_INSTALL_CONFIRM_RE.search((content or "").strip()))
+
+
+def _pending_install_offer(messages: list[dict]) -> dict | None:
+    """Return the newest unresolved install offer in a conversation."""
+    for message in reversed(messages):
+        if message.get("kind") != "install_offer":
+            continue
+        metadata = message.get("metadata") or {}
+        if metadata.get("status", "pending") == "pending":
+            return message
+    return None
 
 
 def _format_discovery_response(content: str) -> str:
@@ -899,6 +922,92 @@ def register_routes(app, deps):
     projects_root.mkdir(parents=True, exist_ok=True)
     chat_repo.ensure_system_project()
 
+    async def _install_plugin_project(project: dict, conversation_id: str = "") -> dict:
+        """Validate and install a project after an explicit user confirmation."""
+        try:
+            validation = await asyncio.to_thread(validate_workspace, project)
+        except Exception as exc:
+            raise ValueError(f"plugin não passou na validação: {exc}") from exc
+
+        workspace = _project_workspace(project)
+        plugin_id = validation["plugin_id"]
+        target = deps.plugins_dir / plugin_id
+        backup_root = creator_root / "backups" / plugin_id
+        backup = backup_root / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        staging = deps.plugins_dir / f".{plugin_id}.chat-staging"
+
+        def _install():
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.copytree(workspace, staging)
+            existed = target.is_dir()
+            old_row = plugin_repo.get(plugin_id)
+            if existed:
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(target, backup)
+                # Keep conventional user-owned folders if the generated update
+                # does not contain them. DB rows and plugin settings live outside
+                # the code folder and are preserved independently.
+                for name in ("data", "uploads", "media", "storage", ".data"):
+                    source = target / name
+                    destination = staging / name
+                    if source.exists() and not destination.exists():
+                        shutil.copytree(source, destination) if source.is_dir() else shutil.copy2(source, destination)
+            replaced = deps.plugins_dir / f".{plugin_id}.chat-replaced"
+            shutil.rmtree(replaced, ignore_errors=True)
+            try:
+                if existed:
+                    os.replace(target, replaced)
+                os.replace(staging, target)
+                plugin_repo.upsert(plugin_id, validation["version"], enabled=True)
+                run_pending_migrations(load_manifest(target), target)
+            except Exception:
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                if replaced.exists():
+                    os.replace(replaced, target)
+                if old_row:
+                    plugin_repo.upsert(plugin_id, old_row["version"], enabled=bool(old_row["enabled"]))
+                else:
+                    plugin_repo.delete(plugin_id)
+                raise
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(replaced, ignore_errors=True)
+            return existed
+
+        try:
+            updated = await asyncio.to_thread(_install)
+        except Exception as exc:
+            logger.exception("chat plugin installation failed")
+            raise RuntimeError(f"instalação revertida após falha: {exc}") from exc
+
+        result_message = "Plugin atualizado com sucesso." if updated else "Plugin instalado com sucesso."
+        result = {
+            "plugin_id": plugin_id,
+            "version": validation["version"],
+            "updated": updated,
+            "restarting": True,
+            "message": result_message,
+        }
+        if conversation_id:
+            conversation = await asyncio.to_thread(chat_repo.get_conversation, conversation_id)
+            if conversation and conversation["project_id"] == project["id"]:
+                rows = await asyncio.to_thread(chat_repo.list_messages, conversation_id)
+                offer = _pending_install_offer(rows)
+                if offer:
+                    metadata = dict(offer.get("metadata") or {})
+                    metadata["status"] = "updated" if updated else "installed"
+                    await asyncio.to_thread(
+                        chat_repo.update_message, offer["id"],
+                        content=offer.get("content") or "", metadata=metadata,
+                    )
+                result["message_row"] = await asyncio.to_thread(
+                    chat_repo.add_message, conversation_id, "assistant",
+                    result_message + " O WhatsBot será reiniciado para carregar o plugin.",
+                )
+        schedule_restart(reason=f"plugin {plugin_id} {'updated' if updated else 'installed'} from Chat")
+        return result
+
     @app.get("/api/chat")
     async def bootstrap():
         projects = await asyncio.to_thread(chat_repo.list_projects)
@@ -1031,7 +1140,29 @@ def register_routes(app, deps):
             deps.settings.get("openrouter_api_key", ""),
         )
         messages = _add_conversation_cost_totals(messages, conv.get("model") or "", pricing)
-        return _ok({"conversation": conv, "project": project, "messages": messages})
+        active = _active_conversation_runs.get(conversation_id)
+        active_run = None if not active else {
+            "run_id": active["run_id"],
+            "status": active.get("status") or "Trabalhando",
+        }
+        return _ok({
+            "conversation": conv,
+            "project": project,
+            "messages": messages,
+            "active_run": active_run,
+        })
+
+    @app.get("/api/chat/conversations/{conversation_id}/activity")
+    async def get_conversation_activity(conversation_id: str):
+        if not await asyncio.to_thread(chat_repo.get_conversation, conversation_id):
+            return _err("conversa não encontrada", 404)
+        messages = await asyncio.to_thread(chat_repo.list_messages, conversation_id)
+        active = _active_conversation_runs.get(conversation_id)
+        active_run = None if not active else {
+            "run_id": active["run_id"],
+            "status": active.get("status") or "Trabalhando",
+        }
+        return _ok({"messages": messages, "active_run": active_run})
 
     @app.put("/api/chat/conversations/{conversation_id}")
     async def update_conversation(conversation_id: str, body: dict):
@@ -1115,11 +1246,15 @@ def register_routes(app, deps):
         if len(content) > _MAX_MESSAGE_CHARS:
             return _err(f"mensagem grande demais (limite {_MAX_MESSAGE_CHARS} caracteres)")
         api_key = deps.settings.get("openrouter_api_key", "")
-        if not api_key and not (project["kind"] == "system" and _is_plugin_intent(content)):
+        install_confirmation = project["kind"] == "plugin" and _is_install_confirmation(content)
+        if not api_key and not install_confirmation and not (
+            project["kind"] == "system" and _is_plugin_intent(content)
+        ):
             return _err("configure a chave de API no Painel antes de usar o Chat")
+        run_id = uuid.uuid4().hex
+        panel_base_url = _public_base_url(request)
 
         async def stream():
-            run_id = uuid.uuid4().hex
             yield _ndjson("run_started", {"run_id": run_id})
             project_lock = None
             if project["kind"] == "plugin":
@@ -1147,8 +1282,21 @@ def register_routes(app, deps):
                     yield _ndjson("conversation_updated", {"title": title})
 
                 rows = await asyncio.to_thread(chat_repo.list_messages, conversation_id)
+                if install_confirmation:
+                    yield _ndjson("status", {"label": "Validando e instalando plugin"})
+                    result = await _install_plugin_project(project, conversation_id)
+                    message_row = result.pop("message_row", None)
+                    if message_row:
+                        yield _ndjson("message_saved", message_row)
+                    yield _ndjson("install_completed", result)
+                    yield _ndjson("run_completed", {
+                        "run_id": run_id,
+                        "installed": True,
+                        "installation": result,
+                    })
+                    return
                 if project["kind"] == "system" and _is_plugin_intent(content):
-                    chat_url = f"{_public_base_url(request)}/chat"
+                    chat_url = f"{panel_base_url}/chat"
                     assistant_text = (
                         "Para criar ou alterar um plugin, clique no botão **+** no topo da barra lateral "
                         f"esquerda do Chat, ou [abra o Chat]({chat_url}), crie um projeto e descreva ali, "
@@ -1188,7 +1336,7 @@ def register_routes(app, deps):
                     api_key=api_key, model_id=model_id, reasoning=conv.get("reasoning") or "",
                     project_kind=agent_kind, workspace=_project_workspace(project),
                     project_root=deps.settings.data_dir,
-                    panel_base_url=_public_base_url(request),
+                    panel_base_url=panel_base_url,
                 )
                 active_run = {"agent": agent, "current_run_id": run_id}
                 _active_agents[run_id] = active_run
@@ -1206,17 +1354,9 @@ def register_routes(app, deps):
                     )
                     async for event in _with_timeout(events):
                         if event is _STREAM_HEARTBEAT:
-                            if await request.is_disconnected():
-                                await agent.acancel_run(current_run_id)
-                                state["cancelled"] = True
-                                return
                             yield _ndjson("heartbeat", {"run_id": run_id})
                             continue
                         event_name = getattr(event, "event", "")
-                        if await request.is_disconnected():
-                            await agent.acancel_run(current_run_id)
-                            state["cancelled"] = True
-                            return
                         if event_name == "RunContent":
                             delta = getattr(event, "content", None)
                             if delta:
@@ -1346,7 +1486,20 @@ def register_routes(app, deps):
 
                 if validation is not None:
                     validation = await asyncio.to_thread(validate_workspace, project)
-                    yield _ndjson("install_ready", validation)
+                    install_offer = {
+                        "plugin_id": validation["plugin_id"],
+                        "name": validation["name"],
+                        "version": validation["version"],
+                        "tests": validation["tests"],
+                        "installed": validation["installed"],
+                        "status": "pending",
+                    }
+                    offer_row = await asyncio.to_thread(
+                        chat_repo.add_message, conversation_id, "assistant", "",
+                        kind="install_offer", metadata=install_offer,
+                    )
+                    install_offer["offer_message_id"] = offer_row["id"]
+                    yield _ndjson("install_ready", install_offer)
                 if final_metrics:
                     pricing = await asyncio.to_thread(
                         _get_model_pricing_details, model_id, api_key,
@@ -1384,12 +1537,78 @@ def register_routes(app, deps):
                 if project_lock is not None and project_lock.locked():
                     project_lock.release()
 
-        return StreamingResponse(stream(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
+        queue: asyncio.Queue = asyncio.Queue()
+        channel = {
+            "run_id": run_id,
+            "conversation_id": conversation_id,
+            "project_id": project["id"],
+            "status": "Iniciando",
+            "stream_open": True,
+        }
+        _active_conversation_runs[conversation_id] = channel
+
+        async def pump_in_background():
+            try:
+                async for chunk in stream():
+                    try:
+                        event = json.loads(chunk)
+                        event_name = event.get("event")
+                        event_data = event.get("data") or {}
+                        if event_name == "status":
+                            channel["status"] = event_data.get("label") or "Trabalhando"
+                        elif event_name == "install_ready":
+                            channel["status"] = "Pronto para instalar"
+                        elif event_name in ("run_failed", "run_cancelled", "run_completed"):
+                            channel["status"] = event_name.removeprefix("run_")
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        pass
+                    if channel.get("stream_open"):
+                        queue.put_nowait(chunk)
+            except asyncio.CancelledError:
+                logger.info("background chat run cancelled: %s", run_id)
+            except Exception:
+                logger.exception("background chat run crashed: %s", run_id)
+            finally:
+                current = _active_conversation_runs.get(conversation_id)
+                if current is channel:
+                    _active_conversation_runs.pop(conversation_id, None)
+                if channel.get("stream_open"):
+                    queue.put_nowait(None)
+
+        task = asyncio.create_task(pump_in_background(), name=f"plugin-chat-{run_id}")
+        channel["task"] = task
+        _background_chat_tasks.add(task)
+        task.add_done_callback(_background_chat_tasks.discard)
+
+        async def subscribe():
+            try:
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        return
+                    yield chunk
+            finally:
+                # Closing the page only detaches this viewer. The background
+                # task keeps writing files, validating and persisting results.
+                channel["stream_open"] = False
+
+        return StreamingResponse(
+            subscribe(), media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Chat-Run-ID": run_id},
+        )
 
     @app.post("/api/chat/runs/{run_id}/cancel")
     async def cancel_run(run_id: str):
         active = _active_agents.get(run_id)
         if not active:
+            background = next(
+                (item for item in _active_conversation_runs.values() if item["run_id"] == run_id),
+                None,
+            )
+            task = background.get("task") if background else None
+            if task and not task.done():
+                task.cancel()
+                return _ok({"cancelled": True})
             return _ok({"cancelled": False})
         if isinstance(active, dict):
             agent = active["agent"]
@@ -1457,76 +1676,13 @@ def register_routes(app, deps):
         if not project:
             return _err("projeto não encontrado", 404)
         try:
-            validation = await asyncio.to_thread(validate_workspace, project)
+            result = await _install_plugin_project(
+                project, (body or {}).get("conversation_id") or "",
+            )
         except Exception as exc:
-            return _err(f"plugin não passou na validação: {exc}")
-
-        workspace = _project_workspace(project)
-        plugin_id = validation["plugin_id"]
-        target = deps.plugins_dir / plugin_id
-        backup_root = creator_root / "backups" / plugin_id
-        backup = backup_root / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
-        staging = deps.plugins_dir / f".{plugin_id}.chat-staging"
-
-        def _install():
-            shutil.rmtree(staging, ignore_errors=True)
-            shutil.copytree(workspace, staging)
-            existed = target.is_dir()
-            old_row = plugin_repo.get(plugin_id)
-            if existed:
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(target, backup)
-                # Keep conventional user-owned folders if the generated update
-                # does not contain them. DB rows and plugin settings live outside
-                # the code folder and are preserved independently.
-                for name in ("data", "uploads", "media", "storage", ".data"):
-                    source = target / name
-                    destination = staging / name
-                    if source.exists() and not destination.exists():
-                        shutil.copytree(source, destination) if source.is_dir() else shutil.copy2(source, destination)
-            replaced = deps.plugins_dir / f".{plugin_id}.chat-replaced"
-            shutil.rmtree(replaced, ignore_errors=True)
-            try:
-                if existed:
-                    os.replace(target, replaced)
-                os.replace(staging, target)
-                plugin_repo.upsert(plugin_id, validation["version"], enabled=True)
-                run_pending_migrations(load_manifest(target), target)
-            except Exception:
-                if target.exists():
-                    shutil.rmtree(target, ignore_errors=True)
-                if replaced.exists():
-                    os.replace(replaced, target)
-                if old_row:
-                    plugin_repo.upsert(plugin_id, old_row["version"], enabled=bool(old_row["enabled"]))
-                else:
-                    plugin_repo.delete(plugin_id)
-                raise
-            finally:
-                shutil.rmtree(staging, ignore_errors=True)
-            shutil.rmtree(replaced, ignore_errors=True)
-            return existed
-
-        try:
-            updated = await asyncio.to_thread(_install)
-        except Exception as exc:
-            logger.exception("chat plugin installation failed")
-            return _err(f"instalação revertida após falha: {exc}")
-        result_message = "Plugin atualizado com sucesso." if updated else "Plugin instalado com sucesso."
-        conversation_id = (body or {}).get("conversation_id")
-        if conversation_id:
-            conversation = await asyncio.to_thread(chat_repo.get_conversation, conversation_id)
-            if conversation and conversation["project_id"] == project_id:
-                await asyncio.to_thread(
-                    chat_repo.add_message, conversation_id, "assistant",
-                    result_message + " O WhatsBot será reiniciado para carregar a nova versão.",
-                )
-        schedule_restart(reason=f"plugin {plugin_id} {'updated' if updated else 'installed'} from Chat")
-        return _ok({
-            "plugin_id": plugin_id, "version": validation["version"],
-            "updated": updated, "restarting": True,
-            "message": result_message,
-        })
+            return _err(str(exc))
+        result.pop("message_row", None)
+        return _ok(result)
 
     @app.post("/api/chat/projects/{project_id}/rollback")
     async def rollback_project(project_id: str):

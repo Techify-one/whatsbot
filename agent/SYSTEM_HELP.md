@@ -178,7 +178,7 @@ No celular, toque no botão de menu no alto do Chat para abrir os projetos e as 
 
 ### Criar ou alterar um plugin
 
-A ajuda do sistema não cria plugins. No **Chat**, clique no botão **+** no topo da barra lateral esquerda, crie um projeto e descreva com suas palavras o que o plugin deve fazer. Se houver poucos detalhes, o criador fará perguntas curtas antes de começar. O formato completo dos plugins já é carregado pelo criador; depois de entender o pedido, ele trabalha diretamente nos arquivos e executa a validação, sem pesquisar o código do WhatsBot.
+A ajuda do sistema não cria plugins. No **Chat**, clique no botão **+** no topo da barra lateral esquerda, crie um projeto e descreva com suas palavras o que o plugin deve fazer. Se houver poucos detalhes, o criador fará perguntas curtas antes de começar. O formato completo dos plugins já é carregado pelo criador; depois de entender o pedido, ele trabalha diretamente nos arquivos e executa a validação, sem pesquisar o código do WhatsBot. É possível abrir outra página ou fechar o navegador durante a criação: o trabalho continua no servidor e o andamento reaparece ao voltar. Quando terminar, a conversa mostra **Sim, instalar**. Essa oferta continua disponível ao reabrir a conversa. Também é possível escrever “instale por favor” para autorizar a instalação direta pelo WhatsBot.
 
 [Abrir criador de plugins]({{base_url}}/chat)
 

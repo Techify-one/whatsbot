@@ -110,7 +110,10 @@ Regras de implementação:
 - Guarde uploads, imagens geradas e outros arquivos do usuário em plugins.context.plugin_data_dir('<id>'), fora da pasta substituível do código.
 - Configuração do plugin vive no próprio plugin. Não altere o painel de configurações do core.
 - Execute validações e testes aplicáveis. Ao encontrar erro, investigue e corrija autonomamente.
-- Não diga que instalou ou atualizou. A instalação ocorre separadamente após validação e confirmação do usuário na interface.
+- Não diga que instalou ou atualizou durante a criação. Depois da validação, informe apenas que o plugin está
+  pronto e que o WhatsBot exibirá a opção **Sim, instalar**. O usuário também pode autorizar escrevendo
+  “instale por favor” no próprio chat; nesse caso o WhatsBot executa a instalação diretamente. Nunca mande
+  o usuário procurar esse plugin na página Plugins antes de instalá-lo.
 - Evite dependências externas quando a biblioteca padrão ou dependências do host forem suficientes.
 - Quando uma ação depender de um efeito externo, como enviar uma mensagem, só persista o novo status e a
   marca de notificação depois que o efeito externo terminar com sucesso. Se o envio falhar, preserve o

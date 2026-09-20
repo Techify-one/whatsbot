@@ -169,10 +169,11 @@ Abra a engrenagem e escolha **Chat** para conversar com o assistente técnico do
 - **Crie plugins conversando** — cada plugin ganha um projeto com pasta, arquivos e várias conversas persistentes; a referência completa de criação já entra no contexto, sem uma longa pesquisa pelo sistema
 - **Atualize plugins existentes** — abra um plugin instalado, trabalhe em uma cópia de desenvolvimento e preserve seu identificador, configurações e dados
 - **Acompanhe o trabalho** — veja em tempo real arquivos lidos ou editados, comandos, testes, erros e correções
+- **Pode sair da tela** — a criação continua no servidor mesmo se você abrir outra página ou fechar o navegador; ao voltar, o Chat recupera o andamento e a oferta de instalação
 - **Escolha modelo e raciocínio** — a escolha é independente do agente que atende no WhatsApp
 - **Telas organizadas em qualquer modelo** — o criador recebe um contrato visual que orienta largura, hierarquia, densidade, contraste, modo escuro e celular sem prender o plugin a um layout específico
 - **Valide antes de instalar** — manifesto, arquivos declarados, migrations em banco temporário, carregamento, testes e requisitos básicos da interface são verificados; erros voltam ao agente para correção e o ZIP fica disponível para download
-- **Instale com confirmação** — o Chat só instala ou atualiza após você clicar em **Sim**, mantendo backup para recuperação
+- **Instale com confirmação** — depois da validação, a oferta de instalação permanece na conversa; clique em **Sim, instalar** ou escreva “instale por favor” para instalar ou atualizar diretamente, mantendo backup para recuperação
 - **Controle o contexto** — a compactação é automática em conversas longas e também pode ser acionada com `/compact`
 
 Os projetos de desenvolvimento ficam separados da instalação ativa em `storages/plugin_creator/`. Os comandos ainda são executados com as permissões do WhatsBot na sua máquina; essa separação evita alterações acidentais no plugin ativo, mas não é uma sandbox de segurança.
