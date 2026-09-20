@@ -1,9 +1,13 @@
 {
-  "version": "0.2.5",
+  "version": "0.2.6",
   "changelog": [
     {
+      "version": "0.2.6",
+      "description": "- Criador de plugins mais eficiente com DeepSeek 4.1 Flash e Gemini 3.8 Flash, começando a implementação sem pesquisas repetitivas\n- Telas de plugins agora seguem requisitos de largura, organização, responsividade, contraste e temas claro e escuro\n- Validação automática ganhou testes isolados, verificação visual e correção assistida antes da instalação do plugin\n- Ferramentas do Agno agora expõem instruções completas para melhorar a confiabilidade de modelos mais simples"
+    },
+    {
       "version": "0.2.5",
-      "description": "- Chat adaptado para celular com projetos em menu lateral, arquivos em tela cheia e campo de mensagem responsivo\n- Ordenação de projetos no celular ganhou controles próprios para toque\n- Painel reorganizado nas abas Agente, Modelos e mídia e Sistema, com links diretos para cada configuração\n- Ajuda do sistema atualizada para abrir automaticamente a aba e a opção corretas\n- Criador de plugins mais eficiente com DeepSeek 4.1 Flash e Gemini 3.8 Flash, começando a implementação sem pesquisas repetitivas\n- Telas de plugins agora seguem requisitos de largura, organização, responsividade, contraste e temas claro e escuro\n- Validação automática ganhou testes isolados, verificação visual e correção assistida antes da instalação do plugin"
+      "description": "- Chat adaptado para celular com projetos em menu lateral, arquivos em tela cheia e campo de mensagem responsivo\n- Ordenação de projetos no celular ganhou controles próprios para toque\n- Painel reorganizado nas abas Agente, Modelos e mídia e Sistema, com links diretos para cada configuração\n- Ajuda do sistema atualizada para abrir automaticamente a aba e a opção corretas"
     },
     {
       "version": "0.2.4",
