@@ -1,4 +1,4 @@
-agno
+agno==2.9.0
 openai
 httpx
 fastapi

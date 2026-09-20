@@ -178,7 +178,7 @@ No celular, toque no botão de menu no alto do Chat para abrir os projetos e as 
 
 ### Criar ou alterar um plugin
 
-A ajuda do sistema não cria plugins. No **Chat**, clique no botão **+** no topo da barra lateral esquerda, crie um projeto e descreva com suas palavras o que o plugin deve fazer. Se houver poucos detalhes, o criador fará perguntas curtas antes de começar.
+A ajuda do sistema não cria plugins. No **Chat**, clique no botão **+** no topo da barra lateral esquerda, crie um projeto e descreva com suas palavras o que o plugin deve fazer. Se houver poucos detalhes, o criador fará perguntas curtas antes de começar. O formato completo dos plugins já é carregado pelo criador; depois de entender o pedido, ele trabalha diretamente nos arquivos e executa a validação, sem pesquisar o código do WhatsBot.
 
 [Abrir criador de plugins]({{base_url}}/chat)
 
@@ -237,6 +237,12 @@ Em **Painel → Sistema → GOWA**, abra **Proxy da conexão do WhatsApp**. É p
 Em **Painel → Sistema → GOWA**, altere **Verificar atualizações do GOWA diariamente**. Essa opção usa o botão geral **Salvar configurações** no fim do painel.
 
 [Abrir verificação automática do GOWA]({{base_url}}/painel?aba=sistema#gowa-auto-update)
+
+## Telas dos plugins
+
+As telas criadas por plugins aparecem no menu da engrenagem e usam a largura disponível do painel. Elas se
+adaptam ao celular e ao tema claro ou escuro. A forma de organizar os dados muda conforme a finalidade de
+cada plugin; listas, agendas, formulários e relatórios podem ter estruturas diferentes.
 
 ## Quando esta base não tiver a resposta
 

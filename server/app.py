@@ -166,7 +166,7 @@ def create_app(
         import time as _time
         state.stop_event.clear()
         _loop = asyncio.get_running_loop()
-        _set_plugin_runtime(ws_manager, _loop)
+        _set_plugin_runtime(ws_manager, _loop, gowa_client, agent_handler)
         _set_events_runtime(_loop, agent_handler)
         _set_balance_runtime(ws_manager, _loop, settings)
         # Lifecycle: plugins finished loading + bus is live, now broadcast

@@ -78,6 +78,14 @@ para o projeto **WhatsBot — Ajuda do sistema**. Ele é lido novamente ao const
 mensagem de ajuda, recebe o domínio atual no lugar de `{{base_url}}` e fica no contexto antes de qualquer
 consulta por ferramenta. A criação de plugins usa outro prompt e não recebe essa base.
 
+O arquivo [agent/PLUGIN_CREATOR.md](agent/PLUGIN_CREATOR.md) é a referência oficial completa do
+Criador de Plugins. Seu conteúdo inteiro é injetado no prompt de cada execução de implementação. O
+criador recebe o ID e o inventário concreto do projeto, ferramentas do workspace, terminal e validação.
+Também pode consultar exemplos oficiais, plugins instalados e o core em modo somente leitura quando o guia
+não cobrir uma dúvida concreta; isso é complementar, não uma fase obrigatória. Toda mudança na API pública,
+estrutura, manifesto, telas, events, filters, migrations, testes ou convenções de plugins deve atualizar
+essa referência no mesmo trabalho. Ela precisa bastar para a criação comum sem vasculhar o repositório.
+
 **Regra de entrega:** toda criação, alteração, remoção ou mudança de lugar de uma funcionalidade visível
 para o usuário deve atualizar `agent/SYSTEM_HELP.md` no mesmo trabalho. Registre o que a funcionalidade
 faz, onde encontrá-la, os passos comuns, condições relevantes e o link direto correto. Se uma opção mudar
@@ -426,6 +434,23 @@ sobre o Chat e o compositor distribui opções e ações em duas linhas. Funcion
 em arrastar precisam de uma alternativa por toque; a ordem dos projetos usa setas no mobile. Preserve
 essas duas formas de navegação ao alterar projetos, arquivos ou o compositor.
 
+O criador de plugins não usa limite numérico de tool calls do AGNO nem orçamento de consultas: plugins
+complexos precisam alternar criação de vários arquivos, validação e correções até terminar. Para evitar
+pesquisas repetitivas, o contrato completo de [agent/PLUGIN_CREATOR.md](agent/PLUGIN_CREATOR.md) entra no
+system prompt. Referências e shell continuam disponíveis para lacunas e testes concretos. A rota faz até
+três rodadas automáticas quando a validação externa reprova, mantém limite total de 30 minutos e envia
+eventos `heartbeat` durante pausas do modelo. Não volte a limitar ferramentas por uma contagem genérica.
+As operações do `agno.tools.workspace.Workspace` são expostas por `workspace_functions()` em
+[agent/plugin_chat.py](agent/plugin_chat.py), com schemas JSON explícitos. Não volte a registrar o toolkit
+diretamente: no Agno 2.9 isso pode enviar parâmetros vazios ao modelo, fazendo modelos menores pararem ou
+adivinharem argumentos. O wrapper continua usando as proteções de caminho e escritas atômicas do Workspace.
+Com nível de raciocínio vazio, o criador usa `none` para `deepseek/deepseek-v4.1-flash` porque esse modelo
+vem em `high` e pode gastar toda a saída antes da primeira tool; modelos com raciocínio obrigatório usam
+`low`. Uma escolha explícita da pessoa continua prevalecendo. `run_command` aceita somente caminhos relativos
+ao workspace: diagnóstico não pode vasculhar executáveis, ambientes virtuais ou arquivos do host.
+O runner simples de `test_*.py` também roda em processo e banco temporários; nunca execute testes gerados
+contra o banco real, pois repetições de validação deixariam dados e causariam falhas falsas.
+
 ## Fotos de perfil (avatars)
 
 [server/avatars.py](server/avatars.py) cacheia as fotos de perfil em disco em `statics/avatars/<phone>.jpg` (servidas pelo mount estático). Como o WhatsApp não emite evento de "foto mudou", a atualização é por re-fetch do GOWA (ao abrir a conversa e numa varredura periódica de fundo — `AVATAR_REFRESH_INTERVAL = 1800s` em [server/background.py](server/background.py)), sobrescrevendo o arquivo só quando os bytes diferem. O frontend faz cache-bust pelo mtime (`avatar_v`); uma mudança dispara o WS `avatar_updated` `{phone, v}` pra atualizar ao vivo sem reload.
@@ -633,11 +658,18 @@ Referências (na Loja de Plugins, ver "Plugins de exemplo"): `auto_signature` (s
 
 `PluginScreen` faz `import(screen.component)` dinâmico e passa `apiBase = "/api/plugins/<id>"` como prop. Importmap em `web/index.html` cobre `preact`, `preact/hooks`, `htm` — plugin usa os mesmos sem bundle. Screen custom pode importar utilitários do core por URL absoluta (ex: `import { playNotificationSound } from '/static/js/utils/notifications.js'`).
 
+Telas de plugin recebem toda a largura útil do painel. O componente decide apenas a organização interna;
+não volte a limitar o wrapper compartilhado com `max-w-5xl`. A referência [agent/PLUGIN_CREATOR.md](agent/PLUGIN_CREATOR.md)
+contém o contrato visual genérico usado por modelos baratos e o validador do Chat confere largura,
+responsividade, tema, campos, foco, estados de consulta, contraste de cores hex mensurável e formulários
+repetidos compactos (por exemplo, nota editável só sob demanda). Esse contrato define qualidade sem copiar
+a tela de um plugin específico.
+
 ### Convenções obrigatórias
 
 - **`id`**: snake_case, regex `^[a-z][a-z0-9_]{0,31}$`. Vira o prefixo de tabela e o nome do pacote Python.
 - **Tabelas**: SEMPRE `plugin_<id>_<nome>`. O migrator rejeita o contrário com erro claro.
-- **`whatsbot_api_version`**: range semver no manifest (ex: `">=1.0,<2.0"`). Versão atual em `plugins/manifest.WHATSBOT_API_VERSION` — hoje **`1.1.0`** (aditiva: os seams `filter.provisioning.number` / `.message`). Plugin que precise deles declara `">=1.1,<2.0"`; o resto continua em `">=1.0,<2.0"`.
+- **`whatsbot_api_version`**: range semver no manifest (ex: `">=1.0,<2.0"`). Versão atual em `plugins/manifest.WHATSBOT_API_VERSION` — hoje **`1.2.0`**. A 1.2 adiciona `plugins.context.send_whatsapp_message()` e `get_plugin_setting()`; plugin que use esses helpers declara `">=1.2,<2.0"`. Os filters de provisioning continuam disponíveis desde 1.1.
 - **Permissions**: declaradas no manifest mas **não enforced no MVP** — informativo apenas.
 - **Configuração no próprio plugin**: opções de um plugin vão SEMPRE na aba de configuração dele (settings declarativas e/ou screen `config: true`), NUNCA numa aba nova do painel de Configurações do core. Ver "Onde fica a configuração de um plugin".
 - **Settings**: chaves persistem com prefixo `plugin.<id>.`. Plugin nunca grava direto na tabela `config` sem esse prefixo.

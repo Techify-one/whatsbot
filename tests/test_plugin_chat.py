@@ -20,17 +20,25 @@ from db import init_db  # noqa: E402
 init_db(tmp / "whatsbot.db")
 
 from db.repositories import chat_repo  # noqa: E402
+from plugins.context import get_plugin_setting, send_whatsapp_message, set_runtime  # noqa: E402
 from server.routes.chat import (  # noqa: E402
+    _STREAM_HEARTBEAT,
     _format_discovery_response,
     _ensure_system_help_link,
     _is_plugin_intent,
     _safe_workspace_file,
+    _scaffold_plugin_workspace,
+    _run_simple_tests,
+    _validate_frontend_quality,
+    _with_timeout,
     validate_workspace,
 )
 from agent.plugin_chat import (  # noqa: E402
     _inspect_system_state,
     _safe_reference_path,
+    load_plugin_creator_guide,
     load_system_help_knowledge,
+    plugin_creator_prompt,
     reference_functions,
     system_help_prompt,
 )
@@ -71,6 +79,170 @@ def test_system_help_knowledge_is_reloaded_and_has_safe_fallback():
     knowledge.write_text("versão atualizada", encoding="utf-8")
     assert load_system_help_knowledge(knowledge) == "versão atualizada"
     assert "Consulte as referências" in load_system_help_knowledge(tmp / "missing.md")
+
+
+def test_plugin_creator_guide_is_loaded_into_the_prompt():
+    guide = load_plugin_creator_guide()
+    workspace = tmp / "prompt_identity"
+    workspace.mkdir(exist_ok=True)
+    prompt = plugin_creator_prompt(workspace)
+    assert "send_whatsapp_message" in guide
+    assert "validate_plugin_project" in guide
+    assert guide in prompt
+    assert "Use-a primeiro" in prompt
+    assert "ID obrigatório do plugin: prompt_identity" in prompt
+    assert "Contrato de qualidade visual" in guide
+    assert "1366×768" in guide and "360×800" in guide
+    assert "max-w-5xl mx-auto text-wa-text" not in guide
+
+
+def test_frontend_quality_rejects_old_narrow_screen_and_accepts_responsive_screen():
+    bad = tmp / "bad-screen.js"
+    bad.write_text(
+        "export default function X(){return html`<div class=\"max-w-5xl mx-auto\">"
+        "<input /><div>${items.map(x => x.name)}</div></div>`}",
+        encoding="utf-8",
+    )
+    try:
+        _validate_frontend_quality(bad)
+    except ValueError as exc:
+        message = str(exc)
+        assert "largura" in message
+        assert "breakpoint" in message
+        assert "wa-field" in message
+    else:
+        raise AssertionError("a tela estreita e sem contraste deveria ser rejeitada")
+
+    good = tmp / "good-screen.js"
+    good.write_text(
+        """export default function X(){
+        const [loading,setLoading]=useState(true); const [error,setError]=useState('');
+        fetch('/items');
+        return html`<section class=\"w-full text-wa-text\"><style>
+        .good:focus-visible{outline:3px solid currentColor}@media(max-width:560px){.good{width:100%}}
+        </style><h2>Itens</h2><label>Busca<input class=\"wa-field good\" /></label>
+        ${error ? html`<p>${error}<button>Tentar novamente</button></p>` : null}
+        ${loading ? html`<p>Carregando</p>` : items.length === 0 ? html`<p>Nenhum item</p>` : null}
+        </section>`}
+        """,
+        encoding="utf-8",
+    )
+    result = _validate_frontend_quality(good)
+    assert result["responsive"] is True
+    assert result["form_contrast"] is True
+
+    crowded = tmp / "crowded-screen.js"
+    crowded.write_text(
+        """export default function X(){
+        const [loading,setLoading]=useState(false); const [error,setError]=useState(''); fetch('/items');
+        return html`<section class="crowded-page"><style>
+        .crowded-page{--c-ink:#111827;--c-muted:#4b5563;--c-surface:#ffffff;--c-line:#d1d5db;width:100%}
+        html.dark .crowded-page{--c-ink:#f9fafb;--c-muted:#9ca3af;--c-surface:#1f2937;--c-line:#374151}
+        .crowded-page :focus-visible{outline:3px solid blue}@media(max-width:560px){.crowded-page{padding:12px}}
+        </style><h1>Itens</h1><label>Busca<input class="wa-field" /></label>
+        ${error ? html`<p>Erro <button>Tentar novamente</button></p>` : null}
+        ${loading ? html`<p>Carregando</p>` : items.length === 0 ? html`<p>Nenhum item</p>`
+          : items.map(item => html`<textarea class="wa-field" aria-label="Nota"></textarea>`)}</section>`}
+        """,
+        encoding="utf-8",
+    )
+    try:
+        _validate_frontend_quality(crowded)
+    except ValueError as exc:
+        message = str(exc)
+        assert "contraste" in message
+        assert "textarea aberta" in message
+    else:
+        raise AssertionError("campos sem contraste e repetidos deveriam ser rejeitados")
+
+
+def test_new_plugin_scaffold_forces_real_implementation():
+    workspace = tmp / "projects" / "starter_chat"
+    _scaffold_plugin_workspace(workspace, "starter_chat", "Agenda de visitas")
+    assert "id: starter_chat" in (workspace / "plugin.yaml").read_text(encoding="utf-8")
+    assert (workspace / "__init__.py").is_file()
+    assert (workspace / ".whatsbot-scaffold").is_file()
+    starter_prompt = plugin_creator_prompt(workspace)
+    assert "primeira ação deve ser `write_file` em `plugin.yaml`" in starter_prompt
+    assert "Não leia nem liste" in starter_prompt
+    project = {"kind": "plugin", "plugin_id": "starter_chat", "workspace_path": str(workspace)}
+    try:
+        validate_workspace(project, save_version=False)
+    except ValueError as exc:
+        assert ".whatsbot-scaffold" in str(exc)
+    else:
+        raise AssertionError("a estrutura inicial vazia não pode ficar pronta para instalação")
+
+
+def test_workspace_tools_expose_real_schemas_to_inexpensive_models():
+    from agent.plugin_chat import build_agent
+
+    workspace = tmp / "projects" / "tool_schema_chat"
+    _scaffold_plugin_workspace(workspace, "tool_schema_chat", "Ferramentas")
+    agent = build_agent(
+        api_key="fake", model_id="provider/model", reasoning="",
+        project_kind="plugin", workspace=workspace, project_root=ROOT,
+    )
+    tools = {getattr(tool, "name", ""): tool for tool in agent.tools}
+    assert list(tools)[0] == "write_file"
+    write_schema = tools["write_file"].to_dict()["parameters"]
+    assert set(write_schema["required"]) == {"path", "content"}
+    assert write_schema["properties"]["content"]["type"] == "string"
+    command_schema = tools["run_command"].to_dict()["parameters"]
+    assert command_schema["properties"]["args"]["items"]["type"] == "string"
+    blocked = tools["run_command"].entrypoint(["grep", "-rn", "teste", "/home/francisco"])
+    assert blocked.startswith("Error:") and "host" in blocked
+
+
+def test_public_plugin_runtime_helpers_send_messages_and_read_settings():
+    from db.repositories import config_repo
+
+    class FakeGowa:
+        def __init__(self):
+            self.calls = []
+
+        def send_message(self, phone, text, mentions=None, reply_message_id=None):
+            self.calls.append((phone, text, mentions, reply_message_id))
+            return {"ok": True, "id": "sent-1"}
+
+    class FakeHandler:
+        def __init__(self):
+            self.saved = []
+
+        def save_assistant_message(self, phone, text, msg_id=None, status="sent"):
+            message = {
+                "role": "assistant", "content": text, "phone": phone,
+                "msg_id": msg_id, "status": status,
+            }
+            self.saved.append(message)
+            return message
+
+    gowa = FakeGowa()
+    handler = FakeHandler()
+    set_runtime(None, None, gowa, handler)
+    result = send_whatsapp_message(
+        "5511999999999", "Mensagem pronta", mentions=["5511888888888"],
+        reply_message_id="original-1",
+    )
+    assert result["ok"] is True and result["msg_id"] == "sent-1"
+    assert result["sandbox"] is False
+    assert gowa.calls == [(
+        "5511999999999", "Mensagem pronta", ["5511888888888"], "original-1",
+    )]
+    assert handler.saved[0]["content"] == "Mensagem pronta"
+
+    config_repo.set("plugin.helper_demo.notice", "Aviso configurado")
+    assert get_plugin_setting("helper_demo", "notice", "padrão") == "Aviso configurado"
+    assert get_plugin_setting("helper_demo", "missing", "padrão") == "padrão"
+
+    for args in (("", "texto"), ("5511999999999", "")):
+        try:
+            send_whatsapp_message(*args)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("campos vazios devem ser rejeitados")
+    set_runtime(None, None, None, None)
 
 
 def test_reference_paths_include_installed_plugin_sources_but_not_runtime_data():
@@ -118,6 +290,44 @@ def test_runtime_state_tool_is_only_added_to_system_help():
     plugin_tool_names = {tool.name for tool in reference_functions(ROOT)}
     assert "inspect_whatsbot_state" in help_tool_names
     assert "inspect_whatsbot_state" not in plugin_tool_names
+
+
+def test_plugin_reference_search_supports_files_and_blocks_exact_repeats():
+    import asyncio
+
+    functions = {tool.name: tool for tool in reference_functions(ROOT, plugin_creator=True)}
+    first = asyncio.run(functions["search_whatsbot"].entrypoint(
+        "Criador de Plugins", "AGENTS.md", 5,
+    ))
+    assert "AGENTS.md:" in first
+    repeated = asyncio.run(functions["search_whatsbot"].entrypoint(
+        "Criador de Plugins", "AGENTS.md", 5,
+    ))
+    assert repeated.startswith("Error: esta consulta já foi executada")
+
+
+def test_chat_stream_heartbeat_does_not_cancel_slow_agent_event():
+    import asyncio
+
+    completed = False
+
+    async def slow_events():
+        nonlocal completed
+        await asyncio.sleep(0.03)
+        completed = True
+        yield "done"
+
+    async def exercise():
+        items = []
+        async for item in _with_timeout(
+            slow_events(), seconds=0.2, heartbeat_seconds=0.005,
+        ):
+            items.append(item)
+        assert completed is True
+        assert items[-1] == "done"
+        assert items.count(_STREAM_HEARTBEAT) >= 2
+
+    asyncio.run(exercise())
 
 
 def test_system_help_adds_specific_link_when_model_omits_it():
@@ -212,6 +422,29 @@ def test_validate_and_export_ready_workspace():
     assert Path(result["zip_path"]).is_file()
 
 
+def test_simple_test_runner_uses_a_fresh_database_each_time():
+    workspace = _plugin_dir(
+        "isolated_tests",
+        "CREATE TABLE plugin_isolated_tests_items (id INTEGER PRIMARY KEY AUTOINCREMENT);",
+    )
+    test_file = workspace / "test_isolation.py"
+    test_file.write_text(
+        "from sqlalchemy import text\n"
+        "from plugins.context import make_plugin_db\n\n"
+        "def test_clean_database():\n"
+        "    with make_plugin_db() as conn:\n"
+        "        conn.execute(text('INSERT INTO plugin_isolated_tests_items DEFAULT VALUES'))\n"
+        "        total = conn.execute(text('SELECT COUNT(*) FROM plugin_isolated_tests_items')).scalar_one()\n"
+        "    assert total == 1\n",
+        encoding="utf-8",
+    )
+    first_failures, first_output = _run_simple_tests(workspace, [test_file])
+    second_failures, second_output = _run_simple_tests(workspace, [test_file])
+    assert first_failures == second_failures == 0
+    assert "PASS test_isolation.py:test_clean_database" in first_output
+    assert "PASS test_isolation.py:test_clean_database" in second_output
+
+
 def test_rejects_destructive_migration():
     workspace = _plugin_dir("unsafe_chat", "DROP TABLE plugin_unsafe_chat_items;")
     project = chat_repo.create_project("Unsafe", "plugin", "unsafe_chat", str(workspace))
@@ -241,6 +474,41 @@ def test_discovery_agent_has_no_tools():
     )
     assert not agent.tools
     assert "sem conhecimento técnico" in agent.system_message
+
+    plugin_agent = build_agent(
+        api_key="fake", model_id="provider/model", reasoning="",
+        project_kind="plugin", workspace=tmp / "unlimited_tools", project_root=ROOT,
+    )
+    assert plugin_agent.tool_call_limit is None
+    assert plugin_agent.model.extra_body == {"reasoning": {"effort": "low"}}
+    assert "Não encerre dizendo que vai começar" in plugin_agent.system_message
+    assert "REFERÊNCIA OFICIAL DE PLUGINS" in plugin_agent.system_message
+    assert "ID obrigatório do plugin: unlimited_tools" in plugin_agent.system_message
+    tool_names = {getattr(tool, "name", "") for tool in plugin_agent.tools}
+    assert not {"list_whatsbot_files", "read_whatsbot_file", "search_whatsbot"} & tool_names
+    assert {"run_command", "write_file", "read_file", "list_files"} <= tool_names
+
+    (tmp / "unlimited_tools" / "plugin.yaml").write_text(
+        "id: unlimited_tools\nname: Existing\nversion: 1.0.0\n", encoding="utf-8",
+    )
+    update_agent = build_agent(
+        api_key="fake", model_id="provider/model", reasoning="",
+        project_kind="plugin", workspace=tmp / "unlimited_tools", project_root=ROOT,
+    )
+    update_names = {getattr(tool, "name", "") for tool in update_agent.tools}
+    assert {"list_whatsbot_files", "read_whatsbot_file", "search_whatsbot"} <= update_names
+
+    high_reasoning_agent = build_agent(
+        api_key="fake", model_id="provider/model", reasoning="high",
+        project_kind="plugin", workspace=tmp / "unlimited_tools", project_root=ROOT,
+    )
+    assert high_reasoning_agent.model.extra_body == {"reasoning": {"effort": "high"}}
+
+    deepseek_agent = build_agent(
+        api_key="fake", model_id="deepseek/deepseek-v4.1-flash", reasoning="",
+        project_kind="plugin", workspace=tmp / "unlimited_tools", project_root=ROOT,
+    )
+    assert deepseek_agent.model.extra_body == {"reasoning": {"effort": "none"}}
 
 
 def test_chat_cost_estimate_uses_cache_price_and_running_total():
@@ -467,13 +735,21 @@ def main():
     tests = [
         test_system_help_prompt_uses_current_panel_origin,
         test_system_help_knowledge_is_reloaded_and_has_safe_fallback,
+        test_plugin_creator_guide_is_loaded_into_the_prompt,
+        test_frontend_quality_rejects_old_narrow_screen_and_accepts_responsive_screen,
+        test_new_plugin_scaffold_forces_real_implementation,
+        test_workspace_tools_expose_real_schemas_to_inexpensive_models,
+        test_public_plugin_runtime_helpers_send_messages_and_read_settings,
         test_reference_paths_include_installed_plugin_sources_but_not_runtime_data,
         test_help_state_inspection_excludes_secrets_and_personal_rows,
         test_runtime_state_tool_is_only_added_to_system_help,
+        test_plugin_reference_search_supports_files_and_blocks_exact_repeats,
+        test_chat_stream_heartbeat_does_not_cancel_slow_agent_event,
         test_system_help_adds_specific_link_when_model_omits_it,
         test_chat_persistence,
         test_project_order_and_soft_delete,
         test_validate_and_export_ready_workspace,
+        test_simple_test_runner_uses_a_fresh_database_each_time,
         test_rejects_destructive_migration,
         test_workspace_path_cannot_escape,
         test_discovery_agent_has_no_tools,

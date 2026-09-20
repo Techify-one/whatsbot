@@ -11,6 +11,7 @@ import asyncio
 import dataclasses
 import logging
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -31,13 +32,20 @@ logger = logging.getLogger(__name__)
 
 _ws_manager: Optional[Any] = None
 _loop: Optional[asyncio.AbstractEventLoop] = None
+_gowa_client: Optional[Any] = None
+_agent_handler: Optional[Any] = None
 
 
-def set_runtime(ws_manager: Any, loop: asyncio.AbstractEventLoop) -> None:
-    """Called once during server startup. Plugins read these via ``broadcast``."""
-    global _ws_manager, _loop
+def set_runtime(
+    ws_manager: Any, loop: asyncio.AbstractEventLoop, gowa_client: Any = None,
+    agent_handler: Any = None,
+) -> None:
+    """Wire the public runtime services used by plugin helpers."""
+    global _ws_manager, _loop, _gowa_client, _agent_handler
     _ws_manager = ws_manager
     _loop = loop
+    _gowa_client = gowa_client
+    _agent_handler = agent_handler
 
 
 def broadcast(event: str, data: dict) -> None:
@@ -50,6 +58,80 @@ def broadcast(event: str, data: dict) -> None:
         )
     except Exception as e:
         logger.debug("plugin broadcast failed: %s", e)
+
+
+def send_whatsapp_message(
+    phone: str,
+    text: str,
+    mentions: list[str] | None = None,
+    reply_message_id: str | None = None,
+) -> dict:
+    """Send a text through the active WhatsBot/GOWA connection.
+
+    This is the supported outbound API for plugin tools, event handlers and
+    routes. Async callers should invoke it with ``asyncio.to_thread`` because
+    the underlying GOWA client is synchronous.
+    """
+    phone = str(phone or "").strip()
+    text = str(text or "").strip()
+    if not phone:
+        raise ValueError("telefone não informado")
+    if not text:
+        raise ValueError("mensagem vazia")
+    if _gowa_client is None or _agent_handler is None:
+        raise RuntimeError("WhatsApp indisponível: runtime do plugin não inicializado")
+
+    from db.repositories import config_repo
+    from gowa.client import extract_msg_id
+    from plugins.events import apply_filter_sync, emit_with_filter_sync
+
+    filtered = apply_filter_sync(
+        "filter.reply.part", text,
+        {"phone": phone, "index": 0, "total": 1, "source": "plugin"},
+    )
+    if filtered is None:
+        raise RuntimeError("mensagem bloqueada por plugin")
+    text = str(filtered)
+
+    sandbox = bool(config_repo.get(f"sandbox_contact.{phone}"))
+    response = None
+    if not sandbox:
+        response = _gowa_client.send_message(
+            phone, text, mentions=mentions, reply_message_id=reply_message_id,
+        )
+    msg_id = extract_msg_id(response)
+    message = _agent_handler.save_assistant_message(
+        phone, text, msg_id=msg_id, status="sent",
+    )
+    if _ws_manager is not None and _loop is not None:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _ws_manager.broadcast("new_message", {"phone": phone, "message": message}),
+                _loop,
+            )
+        except Exception as exc:
+            logger.debug("plugin message broadcast failed: %s", exc)
+    emit_with_filter_sync("message.sent", {
+        "phone": phone, "text": text, "msg_id": msg_id,
+        "media_type": None, "media_path": None,
+        "source": "plugin", "status": "sent",
+        "reply_to_msg_id": reply_message_id,
+        "ts": time.time(),
+    })
+    return {
+        "ok": True, "msg_id": msg_id, "sandbox": sandbox,
+        "message": message,
+    }
+
+
+def get_plugin_setting(plugin_id: str, key: str, default: Any = None) -> Any:
+    """Read one declarative plugin setting from its namespaced config key."""
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", plugin_id or ""):
+        raise ValueError("invalid plugin id")
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key or ""):
+        raise ValueError("invalid plugin setting key")
+    from db.repositories import config_repo
+    return config_repo.get(f"plugin.{plugin_id}.{key}", default)
 
 
 # ── DB access for plugins ────────────────────────────────────────────────

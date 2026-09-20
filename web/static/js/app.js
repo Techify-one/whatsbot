@@ -653,7 +653,7 @@ function App({ onLogout, hasPassword }) {
 
       <main class="flex-1 min-h-0 ${tab === 'chat' ? 'overflow-hidden' : 'overflow-auto'} ${tab !== 'contacts' ? 'bg-wa-panel' : ''}">
         ${activePluginScreen
-          ? html`<div class="max-w-5xl mx-auto p-4">
+          ? html`<div class="w-full min-w-0 p-4">
               <${PageHeader} title=${activePluginScreen.title} onBack=${() => setTab('contacts')} />
               <${PluginScreen} screen=${activePluginScreen} />
             </div>`

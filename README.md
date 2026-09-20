@@ -166,11 +166,12 @@ Teste a IA antes de colocar para funcionar:
 Abra a engrenagem e escolha **Chat** para conversar com o assistente técnico do próprio WhatsBot:
 
 - **Tire dúvidas do sistema** — pergunte onde fica uma configuração ou como mudar um comportamento; o assistente consulta o código e a documentação atuais antes de orientar
-- **Crie plugins conversando** — cada plugin ganha um projeto com pasta, arquivos e várias conversas persistentes
+- **Crie plugins conversando** — cada plugin ganha um projeto com pasta, arquivos e várias conversas persistentes; a referência completa de criação já entra no contexto, sem uma longa pesquisa pelo sistema
 - **Atualize plugins existentes** — abra um plugin instalado, trabalhe em uma cópia de desenvolvimento e preserve seu identificador, configurações e dados
 - **Acompanhe o trabalho** — veja em tempo real arquivos lidos ou editados, comandos, testes, erros e correções
 - **Escolha modelo e raciocínio** — a escolha é independente do agente que atende no WhatsApp
-- **Valide antes de instalar** — manifest, migrations, sintaxe e testes são verificados; o ZIP fica disponível para download
+- **Telas organizadas em qualquer modelo** — o criador recebe um contrato visual que orienta largura, hierarquia, densidade, contraste, modo escuro e celular sem prender o plugin a um layout específico
+- **Valide antes de instalar** — manifesto, arquivos declarados, migrations em banco temporário, carregamento, testes e requisitos básicos da interface são verificados; erros voltam ao agente para correção e o ZIP fica disponível para download
 - **Instale com confirmação** — o Chat só instala ou atualiza após você clicar em **Sim**, mantendo backup para recuperação
 - **Controle o contexto** — a compactação é automática em conversas longas e também pode ser acionada com `/compact`
 
