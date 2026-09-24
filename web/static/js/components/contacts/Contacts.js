@@ -1,7 +1,7 @@
 import { h } from 'preact';
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import htm from 'htm';
-import { getContacts, getContact, markAsRead, markAsUnread, toggleContactAI, getTags, deleteContact, archiveContact, pinContact, checkPhone, updateContactTags, createTag } from '../../services/api.js';
+import { getContacts, getContact, markAsRead, markAsUnread, toggleContactAI, getTags, deleteContact, archiveContact, pinContact, checkPhone, lookupContactByPhone, updateContactTags, createTag } from '../../services/api.js';
 import { ContactList } from './ContactList.js';
 import { ContactDetail } from './ContactDetail.js';
 import { ContactInfoPanel } from './ContactInfoPanel.js';
@@ -306,6 +306,25 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
     setCheckPhoneError(null);
     setStartChatPhone(normalizedPhone);
   }, [checkingPhone]);
+
+  // Clicking a sender's name in a group. An existing contact opens directly (the
+  // conversation already exists, so there is nothing to warn about); a new one
+  // goes through the same ban-risk warning as "start conversation". The lookup
+  // is read-only, so a click alone never creates a contact.
+  const handleOpenParticipant = useCallback(async (participantPhone) => {
+    if (!participantPhone) return;
+    try {
+      const res = await lookupContactByPhone(participantPhone);
+      if (res && res.ok && res.data && res.data.exists && res.data.contact) {
+        selectContact(res.data.contact.phone);
+        return;
+      }
+    } catch (e) {
+      // A failed check must not block: fall through to the start-chat flow,
+      // whose check-phone step is idempotent.
+    }
+    handleStartConversation(participantPhone);
+  }, [selectContact, handleStartConversation]);
 
   const confirmStartConversation = useCallback(async (normalizedPhone) => {
     if (!normalizedPhone || checkingPhone) return;
@@ -821,6 +840,7 @@ export function Contacts({ newMessage, chatPresence, contactInfoUpdated, tagsCha
                 groupParticipantsChanged=${groupParticipantsChanged}
                 scrollToMsg=${scrollToMsg}
                 onScrolledToMsg=${() => setScrollToMsg(null)}
+                onOpenParticipant=${handleOpenParticipant}
               />`
           }
           ${showInfoPanel && selected ? html`

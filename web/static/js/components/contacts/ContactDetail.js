@@ -26,7 +26,7 @@ function myReaction(message) {
 
 // ── Contact Detail (WhatsApp Web chat panel) ─────────────────────
 
-export function ContactDetail({ phone, onBack, messages, info, contact, onAvatarClick, contactTyping, setContactData, globalTags, groupParticipantsChanged = null, sandbox = false, api = null, scrollToMsg = null, onScrolledToMsg = null }) {
+export function ContactDetail({ phone, onBack, messages, info, contact, onAvatarClick, contactTyping, setContactData, globalTags, groupParticipantsChanged = null, sandbox = false, api = null, scrollToMsg = null, onScrolledToMsg = null, onOpenParticipant = null }) {
   // Effective send API. Sandbox injects local (no-GOWA) endpoints; the contact
   // chat uses the real ones.
   const _api = {
@@ -1025,6 +1025,12 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                 ? (isUser ? 'Você' : 'IA')
                 : (isUser ? (groupSender || displayName) : (isOperator ? 'Manual' : 'IA'));
               const senderColor = isUser ? '#1f7aec' : (isOperator ? '#b45309' : '#047857');
+              // A group sender matching a roster member becomes clickable. Only BR
+              // numbers (55…): the start-chat flow prefixes 55 to anything else,
+              // which would corrupt a foreign number.
+              const senderMember = (groupSender && onOpenParticipant)
+                ? members.find(mm => mm && mm.name === groupSender && mm.phone && String(mm.phone).startsWith('55'))
+                : null;
 
               return [dateSeparator, html`
                 <div key=${m._localId || i} data-mid=${m._id} class="flex ${isFromMe ? 'justify-end' : 'justify-start'} ${isFirst ? 'mt-[12px]' : 'mt-[2px]'} ${(m.reactions && Object.keys(m.reactions).length) ? 'mb-[14px]' : ''}">
@@ -1044,7 +1050,17 @@ export function ContactDetail({ phone, onBack, messages, info, contact, onAvatar
                         <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>
                       </svg>
                     </button>
-                    <span class="block text-[11px] font-semibold leading-[13px] mb-[2px] truncate" style="color: ${senderColor};">${senderLabel}</span>
+                    ${senderMember ? html`
+                      <button
+                        type="button"
+                        onClick=${() => onOpenParticipant(String(senderMember.phone))}
+                        class="block max-w-full text-left text-[11px] font-semibold leading-[13px] mb-[2px] truncate cursor-pointer hover:underline"
+                        style="color: ${senderColor};"
+                        title=${`Abrir conversa com ${senderLabel}`}
+                      >${senderLabel}</button>
+                    ` : html`
+                      <span class="block text-[11px] font-semibold leading-[13px] mb-[2px] truncate" style="color: ${senderColor};">${senderLabel}</span>
+                    `}
                     ${(!m.revoked && m.reply_to_msg_id) ? (() => {
                       const qmsg = findQuoted(m.reply_to_msg_id);
                       const q = quotedInfo(qmsg);

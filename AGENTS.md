@@ -477,6 +477,8 @@ reinício do WhatsBot encerra tarefas em curso, mas fechar o navegador não.
 
 Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos salvos → pushName capturado de mensagens recebidas → catálogo do device (`/user/my/contacts`) → `/user/info` (cap de 20 lookups por chamada). Participantes são indexados por dígitos do phone **e** do `lid`. Cache de membros por grupo (TTL 300s), invalidado em mudança de roster (join/leave/promote/demote, via webhook `group.participants_changed`). O serviço é inicializado em `create_app` (`group_mentions.init(gowa_client)`) e a identidade do bot é registrada via `set_bot_identity`. A config `group_reply_mode` (default `mention_only`) controla quando a IA responde em grupos.
 
+**Remetente clicável**: no `ContactDetail`, o nome do remetente numa mensagem de grupo vira `<button>` quando casa por nome exato com um membro do roster (`members`) cujo `phone` começa com `55` — o fluxo de iniciar conversa prefixa `55` a qualquer número, então DDI estrangeiro seria corrompido; esses ficam texto. O clique chama `onOpenParticipant` → `Contacts.handleOpenParticipant`: `GET /api/contacts/lookup`; contato existente abre direto, inexistente (ou erro no lookup) passa pelo `StartChatWarningModal` (o aviso de banimento não pode ser contornado). Sem `onOpenParticipant` (sandbox) o rótulo segue texto.
+
 ## API REST do WhatsBot (backend FastAPI)
 
 | Método | Endpoint | Descrição |
@@ -496,6 +498,7 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 | POST | `/api/webhook` | Recebe mensagens do GOWA (webhook) |
 | GET | `/api/contacts?archived=true` | Lista apenas contatos/grupos arquivados |
 | GET | `/api/contacts/unread-count` | Total de mensagens não lidas (badge global) |
+| GET | `/api/contacts/lookup?phone=` | Diz se o número já é contato (`{exists, contact}`) **sem criar nada** (ao contrário de `check-phone` e `GET /{phone}`). Normaliza igual ao `check-phone` (`_normalize_br_phone`) e aceita as variantes BR de 12/13 dígitos. Declarado antes de `/{phone}` |
 | POST | `/api/contacts/send-self-link` | Envia o link `wa.me` do número pesquisado para o próprio WhatsApp conectado (alternativa segura a iniciar conversa pela API não oficial) |
 | POST | `/api/contacts/{phone}/pin` | Fixa/desafixa a conversa (`{pinned}`). Fixadas vão pro topo da lista. WS `contact_pinned` |
 | POST | `/api/contacts/{phone}/unread` | Marca a conversa como não lida (manual) |
@@ -858,7 +861,7 @@ python tests/test_provisioning_target.py  # par destino+frase do provisionamento
 
 Os testes criam um banco temporário (SQLite por default; setar `WHATSBOT_TEST_DB_URL=postgresql+psycopg://...` para rodar contra Postgres), inserem dados de teste (contatos, mensagens, tags, usage), e validam ~250 checagens (helper `check(...)`) cobrindo:
 - Health, Auth (com e sem senha), Config (GET/PUT/test-key, `group_reply_mode`), Status, Balance
-- Contacts (list, detail, search, archived, send, retry, image, audio, presence, read, toggle-ai, update info, **pin/unpin**, **unread/mark-all-read/mark-all-unread**, **unread-count**, **@menção em grupo / has_unread_mention**, **react/delete de mensagem**, **members** de grupo)
+- Contacts (list, detail, search, archived, send, retry, image, audio, presence, read, toggle-ai, update info, **pin/unpin**, **unread/mark-all-read/mark-all-unread**, **unread-count**, **@menção em grupo / has_unread_mention**, **react/delete de mensagem**, **members** de grupo, **check-phone / lookup** sem efeito colateral)
 - Tags (CRUD + contact tags)
 - Usage (summary, by-contact, detail)
 - Logs, Webhook payloads, Webhook (presence, echo, ack, reaction, reply/quoted, revoke)

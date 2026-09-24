@@ -285,6 +285,12 @@ export async function checkPhone(phone) {
   return request('POST', '/api/contacts/check-phone', { phone });
 }
 
+// Read-only: says whether `phone` is already a contact. Unlike checkPhone it
+// never creates one. Resolves to { exists, contact } in `data`.
+export async function lookupContactByPhone(phone) {
+  return request('GET', '/api/contacts/lookup?phone=' + encodeURIComponent(phone));
+}
+
 // Sends a wa.me link for `phone` to the connected account's own chat, so the
 // operator can start the conversation from the official app instead of here.
 export async function sendSelfLink(phone) {

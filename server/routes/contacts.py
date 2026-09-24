@@ -25,6 +25,20 @@ def _is_sandbox_contact(phone: str) -> bool:
     return bool(config_repo.get(f"{SANDBOX_CONTACT_PREFIX}{phone}"))
 
 
+def _normalize_br_phone(raw: str) -> str | None:
+    """Digits-only phone with country code, or None when it's too short.
+
+    Prefixes `55` when missing, so a foreign number typed without its country
+    code would be corrupted — callers must only pass numbers that are BR or
+    already carry the country code."""
+    digits = "".join(c for c in (raw or "") if c.isdigit())
+    if len(digits) < 10:
+        return None
+    if not digits.startswith("55"):
+        digits = "55" + digits
+    return digits
+
+
 def register_routes(app, deps):
     agent_handler = deps.agent_handler
     gowa_client = deps.gowa_client
@@ -60,12 +74,9 @@ def register_routes(app, deps):
         if not phone:
             return _err("Campo 'phone' é obrigatório.")
 
-        # Normalize: strip non-digits, ensure country code
-        digits = "".join(c for c in phone if c.isdigit())
-        if len(digits) < 10:
+        digits = _normalize_br_phone(phone)
+        if digits is None:
             return _err("Número inválido. Informe DDD + número.")
-        if not digits.startswith("55"):
-            digits = "55" + digits
 
         try:
             result = await asyncio.to_thread(gowa_client.check_phone, digits)
@@ -105,13 +116,11 @@ def register_routes(app, deps):
         """
         body = await request.json()
         phone = (body.get("phone") or "").strip()
-        digits = "".join(c for c in phone if c.isdigit())
-        if len(digits) < 10:
+        digits = _normalize_br_phone(phone)
+        if digits is None:
             return _err("Número inválido. Informe DDD + número.")
-        if not digits.startswith("55"):
-            digits = "55" + digits
 
-        own = (await asyncio.to_thread(gowa_client.get_own_number) or "").strip()
+        own =(await asyncio.to_thread(gowa_client.get_own_number) or "").strip()
         if not own:
             return _err("Não foi possível identificar o número conectado. "
                         "Verifique a conexão do WhatsApp.", status=503)
@@ -160,6 +169,21 @@ def register_routes(app, deps):
         path parameter."""
         count = await asyncio.to_thread(contact_repo.unread_conversation_count)
         return _ok({"count": count})
+
+    @app.get("/api/contacts/lookup")
+    async def lookup_contact(phone: str = ""):
+        """Tell whether `phone` is already a contact, without creating anything.
+
+        Read-only twin of `check-phone` (which pre-creates the contact) and of
+        `GET /api/contacts/{phone}` (which materializes a missing one and marks
+        messages as read). The group sender label uses it to decide between
+        opening the existing conversation and going through the start-chat
+        warning. Declared before /api/contacts/{phone} so the static path wins."""
+        canonical = _normalize_br_phone(phone)
+        if canonical is None:
+            return _err("Número inválido. Informe DDD + número.")
+        contact = await asyncio.to_thread(contact_repo.get_by_phone, canonical)
+        return _ok({"exists": contact is not None, "contact": contact})
 
     @app.get("/api/contacts/{phone}")
     async def get_contact(phone: str, mark_read: bool = True):

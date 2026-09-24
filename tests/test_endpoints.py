@@ -402,6 +402,61 @@ r = client.post("/api/contacts/send-self-link", json={"phone": "123"})
 check("POST /send-self-link (invalid) -> 400", r.status_code == 400)
 
 # ═══════════════════════════════════════════════════════════════════
+#  7b. Phone normalization shared by check-phone / send-self-link / lookup
+# ═══════════════════════════════════════════════════════════════════
+section("Contacts — Check Phone & Lookup")
+
+# check-phone: same normalization as before the shared helper was extracted
+mock_gowa_client.check_phone = MagicMock(return_value={"registered": False})
+r = client.post("/api/contacts/check-phone", json={"phone": "123"})
+check("POST /check-phone (short) -> 400", r.status_code == 400)
+check("POST /check-phone (short) -> same error text",
+      "Número inválido" in (r.json().get("error") or ""), r.text)
+r = client.post("/api/contacts/check-phone", json={"phone": "(11) 99999-0009"})
+check("POST /check-phone -> 200", r.status_code == 200)
+check("POST /check-phone -> prefixes 55 and strips punctuation",
+      mock_gowa_client.check_phone.call_args[0][0] == "5511999990009",
+      str(mock_gowa_client.check_phone.call_args))
+
+# lookup: read-only, so it must never materialize a contact
+def _contact_total() -> int:
+    return (len(contact_repo.list_contacts("", False))
+            + len(contact_repo.list_contacts("", True)))
+
+_lk_before = _contact_total()
+r = client.get("/api/contacts/lookup", params={"phone": "5521988887777"})
+check("GET /lookup (unknown) -> 200", r.status_code == 200)
+check("GET /lookup (unknown) -> exists false, contact null",
+      r.json().get("data") == {"exists": False, "contact": None}, r.text)
+check("GET /lookup (unknown) -> did not create a contact",
+      contact_repo.get_by_phone("5521988887777") is None
+      and _contact_total() == _lk_before)
+
+_alice_id = contact_repo.get_by_phone("5511999990001")["id"]
+r = client.get("/api/contacts/lookup", params={"phone": "5511999990001"})
+_lk = r.json().get("data") or {}
+check("GET /lookup (known) -> exists true", _lk.get("exists") is True, r.text)
+check("GET /lookup (known) -> returns the seeded contact",
+      (_lk.get("contact") or {}).get("id") == _alice_id)
+# Route order guard: /{phone} would answer with messages/usage in the payload
+check("GET /lookup -> static route wins over /{phone}",
+      set(_lk) == {"exists", "contact"}, str(sorted(_lk)))
+
+r = client.get("/api/contacts/lookup", params={"phone": "(11) 99999-0001"})
+check("GET /lookup (no country code) -> same contact",
+      ((r.json().get("data") or {}).get("contact") or {}).get("id") == _alice_id, r.text)
+
+r = client.get("/api/contacts/lookup", params={"phone": "551199990001"})
+check("GET /lookup (BR 12-digit variant) -> same contact",
+      ((r.json().get("data") or {}).get("contact") or {}).get("id") == _alice_id, r.text)
+
+r = client.get("/api/contacts/lookup", params={"phone": "123"})
+check("GET /lookup (short) -> 400", r.status_code == 400)
+check("GET /lookup (short) -> ok false", r.json().get("ok") is False)
+r = client.get("/api/contacts/lookup")
+check("GET /lookup (missing phone) -> 400", r.status_code == 400)
+
+# ═══════════════════════════════════════════════════════════════════
 #  8. Contact retry send
 # ═══════════════════════════════════════════════════════════════════
 section("Contacts — Retry Send")

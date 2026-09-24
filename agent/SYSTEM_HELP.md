@@ -18,6 +18,17 @@ Esta tela mostra as conversas, mensagens, contatos e o estado da conexão com o 
 
 [Abrir conversas]({{base_url}}/)
 
+### Abrir a conversa de quem falou em um grupo
+
+Dentro de um grupo, o nome de quem enviou cada mensagem aparece acima do texto. Quando o nome está em azul e fica sublinhado ao passar o mouse, clique nele para falar com essa pessoa em particular:
+
+- Se a pessoa já é um contato, a conversa dela abre na hora.
+- Se ainda não é, o WhatsBot mostra o aviso sobre os riscos de iniciar uma conversa por aqui. Confirme para criar o contato e abrir a conversa, ou peça para receber o link no seu próprio WhatsApp e começar pelo aplicativo oficial.
+
+O nome só vira clicável para números do Brasil e depois que a lista de participantes do grupo terminar de carregar. Clicar não cria nenhum contato por si só.
+
+[Abrir conversas]({{base_url}}/)
+
 ### Abas de configuração do painel
 
 O painel separa as configurações em três abas:
