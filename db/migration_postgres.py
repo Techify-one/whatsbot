@@ -5,7 +5,7 @@ engine into a freshly-prepared Postgres database. The flow:
 
 1. Build a one-off engine for the target URL (without touching the module-level
    engine, which is still serving requests).
-2. Verify the target is reachable and EMPTY of WhatsBot tables — refuse to
+2. Verify the target is reachable and EMPTY of WhatsBot-Lite tables — refuse to
    overwrite an existing database.
 3. Run Alembic migrations on the target so its schema matches the source.
 4. Walk every core ``Table`` plus every ``plugin_*`` table (read from the
@@ -36,7 +36,7 @@ BATCH_SIZE = 500
 
 
 class TargetNotEmptyError(RuntimeError):
-    """Raised when the target database already contains WhatsBot tables.
+    """Raised when the target database already contains WhatsBot-Lite tables.
 
     Carries the list of conflicting table names so the UI can render them and
     offer the destructive ``force_drop`` retry.
@@ -85,7 +85,7 @@ def _build_target_engine(url: str) -> Engine:
 
 
 def _list_conflicts(engine: Engine) -> list[str]:
-    """Return WhatsBot-related tables already present on the target."""
+    """Return WhatsBot-Lite-related tables already present on the target."""
     insp = inspect(engine)
     existing = set(insp.get_table_names())
     collisions = existing & (CORE_TABLES | {"alembic_version"})
@@ -368,7 +368,7 @@ def migrate_sqlite_to_postgres(
         progress.error = (
             f"Driver Postgres não encontrado: {exc.name}. "
             "Use uma URL no formato 'postgresql+psycopg://user:pass@host:5432/db' "
-            "(o WhatsBot ships com psycopg, não psycopg2)."
+            "(o WhatsBot-Lite ships com psycopg, não psycopg2)."
         )
         cb(progress)
         return progress

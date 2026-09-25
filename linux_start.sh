@@ -1,5 +1,5 @@
 #!/bin/bash
-# WhatsBot — Linux native launcher.
+# WhatsBot-Lite — Linux native launcher.
 #
 # Equivalente do ``windows_start.bat --server`` no Windows: roda Python local
 # (sem Docker) com ``uvicorn`` watchando core + plugins. Edita qualquer ``.py``

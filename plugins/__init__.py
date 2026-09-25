@@ -1,4 +1,4 @@
-"""Plugin system for WhatsBot.
+"""Plugin system for WhatsBot-Lite.
 
 Plugins live in ``storages/plugins/<id>/`` and can extend the app with new
 tools, prompt fragments, REST routes, screens, settings and DB migrations.

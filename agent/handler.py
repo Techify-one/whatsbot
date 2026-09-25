@@ -154,7 +154,7 @@ class AgentHandler:
     ) -> None:
         """Register a tool schema + executor. No-ops on name collision.
 
-        Stores a clean deep-copy in ``_tool_originals`` (with WhatsBot-specific
+        Stores a clean deep-copy in ``_tool_originals`` (with WhatsBot-Lite-specific
         keys like ``display_label`` stripped, so it's safe to send to the LLM
         as-is) and eagerly inserts a default row into ``tool_overrides`` so the
         management UI sees every registered tool.
@@ -171,7 +171,7 @@ class AgentHandler:
                 name, existing_pid or "core", plugin_id or "core",
             )
             return
-        # Pluck WhatsBot-only metadata so the schema we pass to OpenAI/OpenRouter
+        # Pluck WhatsBot-Lite-only metadata so the schema we pass to OpenAI/OpenRouter
         # is a clean tool spec.
         clean = copy.deepcopy(schema)
         default_label = clean.pop("display_label", None)
@@ -938,7 +938,7 @@ class AgentHandler:
         saves it as a private note.
         """
         if not self.api_key:
-            return "[WhatsBot] API key não configurada — não foi possível gerar a análise."
+            return "[WhatsBot-Lite] API key não configurada — não foi possível gerar a análise."
 
         contact = self._get_contact(phone)
 
@@ -1055,7 +1055,7 @@ class AgentHandler:
         in-flight HTTP request instead of letting it complete in the background.
         """
         if not self.api_key:
-            return ProcessResult(reply="[WhatsBot] API key não configurada.")
+            return ProcessResult(reply="[WhatsBot-Lite] API key não configurada.")
 
         contact = self._get_contact(sender)
 
@@ -1174,10 +1174,10 @@ class AgentHandler:
             })
             error_msg = str(e)
             if "401" in error_msg or "unauthorized" in error_msg.lower():
-                return ProcessResult(reply="[WhatsBot] API key inválida. Verifique sua chave OpenRouter.")
+                return ProcessResult(reply="[WhatsBot-Lite] API key inválida. Verifique sua chave OpenRouter.")
             if "429" in error_msg or "rate" in error_msg.lower():
-                return ProcessResult(reply="[WhatsBot] Limite de requisições atingido. Tente novamente em instantes.")
-            return ProcessResult(reply="[WhatsBot] Erro ao processar mensagem. Tente novamente.")
+                return ProcessResult(reply="[WhatsBot-Lite] Limite de requisições atingido. Tente novamente em instantes.")
+            return ProcessResult(reply="[WhatsBot-Lite] Erro ao processar mensagem. Tente novamente.")
 
     def process_message(self, sender: str, text: str, *,
                         save_user_message: bool = True,
@@ -1187,7 +1187,7 @@ class AgentHandler:
                         disable_tools: bool = False) -> ProcessResult:
         """Process an incoming message and return the AI response."""
         if not self.api_key:
-            return ProcessResult(reply="[WhatsBot] API key não configurada.")
+            return ProcessResult(reply="[WhatsBot-Lite] API key não configurada.")
 
         contact = self._get_contact(sender)
 
@@ -1301,10 +1301,10 @@ class AgentHandler:
             })
             error_msg = str(e)
             if "401" in error_msg or "unauthorized" in error_msg.lower():
-                return ProcessResult(reply="[WhatsBot] API key inválida. Verifique sua chave OpenRouter.")
+                return ProcessResult(reply="[WhatsBot-Lite] API key inválida. Verifique sua chave OpenRouter.")
             if "429" in error_msg or "rate" in error_msg.lower():
-                return ProcessResult(reply="[WhatsBot] Limite de requisições atingido. Tente novamente em instantes.")
-            return ProcessResult(reply="[WhatsBot] Erro ao processar mensagem. Tente novamente.")
+                return ProcessResult(reply="[WhatsBot-Lite] Limite de requisições atingido. Tente novamente em instantes.")
+            return ProcessResult(reply="[WhatsBot-Lite] Erro ao processar mensagem. Tente novamente.")
 
     def test_api_key(self, api_key: str) -> tuple[bool, str]:
         """Test if an API key is valid."""

@@ -209,7 +209,7 @@ export function GowaSettings({ id, autoCheck, onAutoCheckChange, onNotify }) {
           ${updateAvailable && !latestSupported ? html`
             <div class="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-xs leading-relaxed">
               <strong>Versão ${latest} fora da faixa homologada</strong> (${info?.supported_range}).
-              O WhatsBot não foi testado com ela e a atualização pode quebrar o envio
+              O WhatsBot-Lite não foi testado com ela e a atualização pode quebrar o envio
               e o recebimento de mensagens. Se algo der errado, use Reverter abaixo.
             </div>
           ` : null}

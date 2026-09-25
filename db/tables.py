@@ -1,4 +1,4 @@
-"""SQLAlchemy Core table definitions for WhatsBot.
+"""SQLAlchemy Core table definitions for WhatsBot-Lite.
 
 These ``Table`` objects are the single source of truth for the database
 schema. They are NOT mapped ORM classes — there is no ``DeclarativeBase``, no
@@ -220,7 +220,7 @@ chat_projects = Table(
     "chat_projects",
     metadata,
     Column("id", Text, primary_key=True),
-    # ``system`` is the built-in WhatsBot help project; ``plugin`` owns a
+    # ``system`` is the built-in WhatsBot-Lite help project; ``plugin`` owns a
     # durable development workspace.  plugin_id stays stable across updates.
     Column("kind", Text, nullable=False, server_default="plugin"),
     Column("plugin_id", Text),

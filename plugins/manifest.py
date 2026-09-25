@@ -121,7 +121,7 @@ def _build_manifest(data: dict, plugin_dir: Path) -> PluginManifest:
     api_range = str(data.get("whatsbot_api_version") or "*")
     if not check_api_compat(api_range):
         raise ValueError(
-            f"plugin {pid} requires WhatsBot API {api_range}, "
+            f"plugin {pid} requires WhatsBot-Lite API {api_range}, "
             f"running {WHATSBOT_API_VERSION}"
         )
 

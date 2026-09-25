@@ -1,5 +1,5 @@
 @echo off
-echo Stopping WhatsBot...
+echo Stopping WhatsBot-Lite...
 
 taskkill /F /IM gowa.exe >nul 2>&1
 
@@ -11,5 +11,5 @@ powershell -Command ^
   "  taskkill /F /PID $p 2>&1 | Out-Null " ^
   "}" >nul 2>&1
 
-echo WhatsBot stopped.
+echo WhatsBot-Lite stopped.
 timeout /t 2 /nobreak >nul

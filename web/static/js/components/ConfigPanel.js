@@ -237,12 +237,12 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
   }
 
   const handleUpdate = async () => {
-    if (!confirm('Deseja atualizar o WhatsBot para a versão mais recente?\nO sistema reiniciará automaticamente após a atualização.')) return;
+    if (!confirm('Deseja atualizar o WhatsBot-Lite para a versão mais recente?\nO sistema reiniciará automaticamente após a atualização.')) return;
     setUpdating(true);
     try {
       const res = await performUpdate();
       if (res.ok) {
-        onNotify(res.data?.message || 'Atualização concluída. O WhatsBot será reiniciado automaticamente.');
+        onNotify(res.data?.message || 'Atualização concluída. O WhatsBot-Lite será reiniciado automaticamente.');
       } else {
         onNotify(res.error || 'Erro ao atualizar.');
       }
@@ -844,7 +844,7 @@ export function ConfigPanel({ config, saving, onSave, onNotify }) {
         <div id="update" class="p-3 bg-wa-panel rounded-lg border border-wa-border scroll-mt-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <label class="text-sm font-semibold text-wa-text">Atualizar WhatsBot</label>
+              <label class="text-sm font-semibold text-wa-text">Atualizar WhatsBot-Lite</label>
               <div class="flex items-center gap-3 mt-1.5">
                 <span class="text-xs text-wa-secondary">
                   Atual: <span class="font-mono font-semibold text-wa-text">${currentVersion || '...'}</span>

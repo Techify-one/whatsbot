@@ -1,4 +1,4 @@
-"""Background tasks for the WhatsBot server (GOWA startup, status/QR polling)."""
+"""Background tasks for the WhatsBot-Lite server (GOWA startup, status/QR polling)."""
 
 import asyncio
 import logging

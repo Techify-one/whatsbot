@@ -1,4 +1,4 @@
-"""Comprehensive endpoint tests for WhatsBot API.
+"""Comprehensive endpoint tests for WhatsBot-Lite API.
 
 Uses FastAPI TestClient with a real temporary SQLite database.
 No external services needed (GOWA/OpenRouter are mocked).

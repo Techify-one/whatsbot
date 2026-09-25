@@ -1,6 +1,6 @@
-# /new-plugin — Criar um novo plugin do WhatsBot
+# /new-plugin — Criar um novo plugin do WhatsBot-Lite
 
-Você (Claude) vai criar um novo plugin do WhatsBot **sem mexer em nenhum arquivo do core**. Tudo fica em `storages/plugins/<id>/`.
+Você (Claude) vai criar um novo plugin do WhatsBot-Lite **sem mexer em nenhum arquivo do core**. Tudo fica em `storages/plugins/<id>/`.
 
 Argumento opcional do usuário (descrição do plugin): `$ARGUMENTS`
 
@@ -138,7 +138,7 @@ Arquivos persistentes do usuário (uploads, imagens e documentos gerados) devem
 ficar em `plugin_data_dir("<id>")`. Essa pasta vive em
 `storages/plugin_data/<id>/` e não é substituída durante atualizações do código.
 
-**Banco de dados (importante)**: o WhatsBot agora roda em cima de SQLAlchemy
+**Banco de dados (importante)**: o WhatsBot-Lite agora roda em cima de SQLAlchemy
 Core (SQLite default, Postgres opcional via tela Settings → Banco). Plugin
 acessa o banco SEMPRE via:
 

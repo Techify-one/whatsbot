@@ -169,7 +169,7 @@ def mark_as_read(contact_id: int) -> list[str]:
 
 def unread_conversation_count() -> int:
     """Number of non-archived conversations that have unread messages — used for the
-    browser-tab badge (e.g. "(3) WhatsBot"). Counts a conversation once regardless of
+    browser-tab badge (e.g. "(3) WhatsBot-Lite"). Counts a conversation once regardless of
     how many messages are unread, mirroring the sidebar badge visibility."""
     with get_engine().connect() as conn:
         return conn.execute(

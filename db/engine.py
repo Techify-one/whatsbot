@@ -119,7 +119,7 @@ def init_engine(url: str) -> Engine:
             # registered on backend A is referenced from backend B and either
             # "does not exist" or collides. The cost of disabling prepared
             # statements is a small per-query overhead (re-parsing on the
-            # server) — irrelevant at WhatsBot's scale and worth the
+            # server) — irrelevant at WhatsBot-Lite's scale and worth the
             # plug-and-play compatibility with any pooled endpoint.
             connect_args["prepare_threshold"] = None
 

@@ -1,4 +1,4 @@
-Crie uma nova release do WhatsBot no GitHub seguindo estes passos:
+Crie uma nova release do WhatsBot-Lite no GitHub seguindo estes passos:
 
 1. Descubra a versão atual pela última tag git: `git describe --tags --abbrev=0 --match "v*"` (se não houver tag, considere v0.0.0)
 2. Incremente a versão patch (ex: 0.1.0 → 0.1.1). Se o argumento for "minor", incremente o minor (ex: 0.1.1 → 0.2.0). Se for "major", incremente o major (ex: 0.2.0 → 1.0.0)

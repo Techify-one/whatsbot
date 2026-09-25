@@ -1,7 +1,7 @@
-"""AGNO-based agent engine for WhatsBot.
+"""AGNO-based agent engine for WhatsBot-Lite.
 
 Replaces the hand-rolled OpenAI tool-calling loop with the AGNO framework
-(``agno.agent.Agent``) while preserving every WhatsBot
+(``agno.agent.Agent``) while preserving every WhatsBot-Lite
 plugin hook (filters + events), usage accounting and execution tracking.
 
 Design notes
@@ -9,7 +9,7 @@ Design notes
 * **Stateless per request.** A fresh Agent is built for each message so
   the tool closures can capture a per-request ``executed`` collector without
   cross-talk between concurrent contacts. AGNO objects are cheap to build.
-* **WhatsBot owns history/system prompt.** We do *not* hand AGNO a ``db`` nor
+* **WhatsBot-Lite owns history/system prompt.** We do *not* hand AGNO a ``db`` nor
   let it build its own context. The system message and the conversation are
   passed in explicitly (already run through ``filter.system_prompt`` and
   ``filter.llm.messages`` by the handler), and AGNO's context builders are
@@ -62,7 +62,7 @@ _DEFAULT_MAX_TOKENS = 8192
 
 @dataclass
 class EngineResult:
-    """Outcome of one AGNO run, mapped back to WhatsBot's ProcessResult."""
+    """Outcome of one AGNO run, mapped back to WhatsBot-Lite's ProcessResult."""
     reply: str = ""
     executed_tools: list[dict] = field(default_factory=list)
     usage: dict | None = None  # {prompt_tokens, completion_tokens, total_tokens}
@@ -237,7 +237,7 @@ def build_functions(handler, contact, sender, active_tools, executed, *, is_asyn
 # --------------------------------------------------------------------------- #
 # Agent construction
 # --------------------------------------------------------------------------- #
-# Context builders for the Agent. WhatsBot owns the system prompt and history,
+# Context builders for the Agent. WhatsBot-Lite owns the system prompt and history,
 # so AGNO must not prepend/resolve anything of its own.
 _CONTEXT_OFF = dict(
     add_history_to_context=False,
@@ -306,7 +306,7 @@ def _extract_reply(run_output) -> str:
     if content is None:
         return ""
     if not isinstance(content, str):
-        # Structured output is not used by WhatsBot's text agent; stringify
+        # Structured output is not used by WhatsBot-Lite's text agent; stringify
         # defensively so a misconfigured model never crashes the pipeline.
         content = str(content)
     return content.strip()

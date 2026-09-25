@@ -18,7 +18,7 @@ LLM_API_BASE_URL = os.environ.get(
     "LLM_API_BASE_URL", "https://llm.techify.one/api/v1"
 ).rstrip("/")
 
-# Techify account provisioning — used by the first-run setup wizard. The WhatsBot
+# Techify account provisioning — used by the first-run setup wizard. The WhatsBot-Lite
 # fetches the current provisioning TARGET (destination number *and* the phrase to
 # send) from TECHIFY_SERVICE_NUMBER_URL, sends that WhatsApp message to that
 # number, Techify creates an account + API key, and the wizard polls
@@ -144,7 +144,7 @@ DEFAULT_CONFIG = {
     # Cached structured verdict for the installed→latest release interval.
     # It contains public release evidence only; no API key or user content.
     "gowa_release_assessment_cache": {},
-    # --- Avisos de atualização do WhatsBot --------------------------------
+    # --- Avisos de atualização do WhatsBot-Lite --------------------------------
     # Ignorar vale somente para uma release; o próximo número volta a avisar.
     # O toggle desliga todos os avisos até ser reativado no painel.
     "whatsbot_update_notifications_enabled": True,

@@ -115,7 +115,7 @@ class GOWAManager:
         ])])
         # Must be "available" to receive typing events from contacts
         cmd.extend(["--presence-on-connect", "available"])
-        cmd.extend(["--os", "Techify - WhatsBot"])
+        cmd.extend(["--os", "Techify - WhatsBot-Lite"])
 
         debug_on = _debug_enabled()
         if debug_on:

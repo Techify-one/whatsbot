@@ -1,6 +1,6 @@
-# WhatsBot — Documentação em Diagramas
+# WhatsBot-Lite — Documentação em Diagramas
 
-Documentação visual da arquitetura do WhatsBot em arquivos **`.excalidraw` nativos**
+Documentação visual da arquitetura do WhatsBot-Lite em arquivos **`.excalidraw` nativos**
 (gerados com a skill [Agents365-ai/excalidraw-skill](https://github.com/Agents365-ai/excalidraw-skill)).
 Cada diagrama tem um `.excalidraw` editável e um `.png` de pré-visualização em [excalidraw/](excalidraw/).
 

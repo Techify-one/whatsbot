@@ -1,7 +1,7 @@
-# Referência completa para criar plugins do WhatsBot
+# Referência completa para criar plugins do WhatsBot-Lite
 
 Esta referência contém o contrato necessário para criar e atualizar plugins. Use-a primeiro. Consulte o
-código do WhatsBot, `AGENTS.md`, exemplos oficiais ou outros plugins apenas quando uma informação concreta
+código do WhatsBot-Lite, `AGENTS.md`, exemplos oficiais ou outros plugins apenas quando uma informação concreta
 não estiver aqui. Faça busca direcionada, leia somente o trecho necessário e volte à implementação.
 
 ## Fluxo obrigatório
@@ -19,9 +19,9 @@ não estiver aqui. Faça busca direcionada, leia somente o trecho necessário e 
 6. Crie testes simples para regras importantes quando fizer sentido.
 7. Chame `validate_plugin_project`. Corrija todos os erros de backend e frontend e valide novamente até
    retornar `valid: true`.
-8. Responda com um resumo curto do que foi criado e testado. Diga que o WhatsBot exibirá a opção
+8. Responda com um resumo curto do que foi criado e testado. Diga que o WhatsBot-Lite exibirá a opção
    **Sim, instalar**. O usuário também pode autorizar escrevendo “instale por favor” no próprio chat; o
-   WhatsBot fará a instalação diretamente. Não mande o usuário procurar o plugin na página Plugins antes
+   WhatsBot-Lite fará a instalação diretamente. Não mande o usuário procurar o plugin na página Plugins antes
    de ele ser instalado.
 
 Num projeto novo, comece escrevendo os arquivos usando esta referência; não leia o esqueleto nem pesquise
@@ -46,7 +46,7 @@ __init__.py
 tools.py                    # ações que a IA do WhatsApp pode chamar
 prompts.py                  # instruções adicionais para a IA saber quando usar as ações
 routes.py                   # API da tela do plugin
-events.py                   # reações a eventos do WhatsBot
+events.py                   # reações a eventos do WhatsBot-Lite
 filters.py                  # alteração de dados no fluxo
 settings.py                 # opções simples exibidas em Plugins → Configurar
 migrations/001_initial.sql  # tabelas persistentes
@@ -67,7 +67,7 @@ name: Meu Plugin
 version: 1.0.0
 whatsbot_api_version: ">=1.2,<2.0"
 description: Descrição curta.
-author: WhatsBot
+author: WhatsBot-Lite
 entry:
   tools: tools
   prompts: prompts
@@ -94,7 +94,7 @@ filters: []
 Uma tela de uso normal aparece no menu da engrenagem. Uma tela com `config: true` aparece dentro do modal
 **Configurar** do plugin e não no menu. Opções simples devem usar `settings.py` em vez de uma tela própria.
 Dependências de terceiros importadas pelo código precisam constar em `dependencies`; `fastapi`, `pydantic`,
-`sqlalchemy`, `httpx` e módulos do WhatsBot já pertencem ao host e não são declarados.
+`sqlalchemy`, `httpx` e módulos do WhatsBot-Lite já pertencem ao host e não são declarados.
 
 ## Persistência e migrations
 
@@ -243,7 +243,7 @@ async def change_status(item_id: int, body: dict):
 ```
 
 `send_whatsapp_message(phone, text, mentions=None, reply_message_id=None)` é a API oficial de envio de
-texto. Ela usa o fluxo do WhatsBot, salva a mensagem no histórico, atualiza a tela, emite `message.sent` e
+texto. Ela usa o fluxo do WhatsBot-Lite, salva a mensagem no histórico, atualiza a tela, emite `message.sent` e
 respeita contatos da área de testes sem enviar para o GOWA. Ela levanta erro se o envio real falhar. Em rota
 `async`, chame por `await asyncio.to_thread(...)`; em tool ou event handler síncrono, chame diretamente.
 Nunca reaja a `message.sent` enviando outra mensagem, pois isso cria um ciclo. Para ações repetíveis, guarde
@@ -385,7 +385,7 @@ class Settings(BaseModel):
     notifications_enabled: bool = Field(default=True, title="Enviar avisos")
 ```
 
-O WhatsBot salva esses campos como `plugin.<id>.<campo>`. Leia no backend com
+O WhatsBot-Lite salva esses campos como `plugin.<id>.<campo>`. Leia no backend com
 `get_plugin_setting("meu_plugin", "delivery_message", valor_padrao)`. Não escreva configuração do plugin
 diretamente no painel do core.
 
@@ -428,7 +428,7 @@ prefixo e segurança das migrations, sintaxe Python, aplica migrations num banco
 entrypoints e executa `test_*.py`. A tela ainda precisa ser exercitada no navegador depois da instalação.
 Os testes portáteis são funções sem parâmetros e usam `assert` sobre regras reais do plugin:
 Durante os testes, `from tools import ...` funciona porque o runner executa na raiz do workspace. Nos
-módulos carregados pelo WhatsBot (`routes.py`, `prompts.py` etc.), use sempre imports relativos entre
+módulos carregados pelo WhatsBot-Lite (`routes.py`, `prompts.py` etc.), use sempre imports relativos entre
 arquivos do plugin, como `from .settings import ...`.
 
 ```python

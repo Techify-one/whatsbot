@@ -1,4 +1,4 @@
-"""Built-in Chat: WhatsBot help and persistent plugin development projects."""
+"""Built-in Chat: WhatsBot-Lite help and persistent plugin development projects."""
 
 from __future__ import annotations
 
@@ -299,7 +299,7 @@ def _scaffold_plugin_workspace(workspace: Path, plugin_id: str, name: str) -> No
                 "version: 1.0.0",
                 'whatsbot_api_version: \">=1.2,<2.0\"',
                 "description: Projeto em construção pelo Criador de Plugins.",
-                "author: WhatsBot",
+                "author: WhatsBot-Lite",
                 "entry: {}",
                 "permissions: []",
                 "dependencies: []",
@@ -310,7 +310,7 @@ def _scaffold_plugin_workspace(workspace: Path, plugin_id: str, name: str) -> No
     if not init_file.exists():
         init_file.write_text('"""Plugin em construção."""\n', encoding="utf-8")
     marker.write_text(
-        "Estrutura inicial criada pelo WhatsBot. Implemente o pedido completo, "
+        "Estrutura inicial criada pelo WhatsBot-Lite. Implemente o pedido completo, "
         "atualize o manifesto e apague este arquivo antes de validar.\n",
         encoding="utf-8",
     )
@@ -702,7 +702,7 @@ def _validate_frontend_quality(component_path: Path) -> dict:
 def validate_workspace(project: dict, *, save_version: bool = True) -> dict:
     workspace = _project_workspace(project)
     if project.get("kind") != "plugin" or workspace is None:
-        raise ValueError("o projeto de ajuda do WhatsBot não é instalável")
+        raise ValueError("o projeto de ajuda do WhatsBot-Lite não é instalável")
     if not workspace.is_dir():
         raise ValueError("pasta do projeto não encontrada")
     if (workspace / _SCAFFOLD_MARKER).is_file():
@@ -765,7 +765,7 @@ def validate_workspace(project: dict, *, save_version: bool = True) -> dict:
             checked_migrations.append(sql_path.name)
 
     # Compile source directly so syntax validation also works in PyInstaller
-    # builds, where ``sys.executable -m compileall`` would relaunch WhatsBot.
+    # builds, where ``sys.executable -m compileall`` would relaunch WhatsBot-Lite.
     for source in workspace.rglob("*.py"):
         if "__pycache__" in source.parts:
             continue
@@ -1003,7 +1003,7 @@ def register_routes(app, deps):
                     )
                 result["message_row"] = await asyncio.to_thread(
                     chat_repo.add_message, conversation_id, "assistant",
-                    result_message + " O WhatsBot será reiniciado para carregar o plugin.",
+                    result_message + " O WhatsBot-Lite será reiniciado para carregar o plugin.",
                 )
         schedule_restart(reason=f"plugin {plugin_id} {'updated' if updated else 'installed'} from Chat")
         return result
@@ -1099,7 +1099,7 @@ def register_routes(app, deps):
         if not project or project.get("deleted_at") is not None:
             return _err("projeto não encontrado", 404)
         if project.get("kind") == "system":
-            return _err("o projeto de ajuda do WhatsBot não pode ser apagado")
+            return _err("o projeto de ajuda do WhatsBot-Lite não pode ser apagado")
         await asyncio.to_thread(chat_repo.soft_delete_project, project_id)
         return _ok({
             "project_id": project_id,
@@ -1191,7 +1191,7 @@ def register_routes(app, deps):
         conversation_id: str,
         audio: UploadFile = File(...),
     ):
-        """Transcribe a temporary voice note with the configured WhatsBot audio model."""
+        """Transcribe a temporary voice note with the configured WhatsBot-Lite audio model."""
         if not await asyncio.to_thread(chat_repo.get_conversation, conversation_id):
             return _err("conversa não encontrada", 404)
         if not deps.settings.get("openrouter_api_key", ""):
@@ -1716,7 +1716,7 @@ def register_routes(app, deps):
         api_key = deps.settings.get("openrouter_api_key", "")
         if not api_key:
             return _err("chave de API não configurada")
-        stable = ("Teste de cache do WhatsBot. Responda apenas OK. " * 180)[:9000]
+        stable = ("Teste de cache do WhatsBot-Lite. Responda apenas OK. " * 180)[:9000]
         results = []
         try:
             for _ in range(2):

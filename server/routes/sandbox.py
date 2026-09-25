@@ -68,8 +68,8 @@ def register_routes(app, deps):
         if not reply:
             return []
 
-        # System notices ([WhatsBot] ...) are shown verbatim, never split.
-        if reply.startswith("[WhatsBot]"):
+        # System notices ([WhatsBot-Lite] ...) are shown verbatim, never split.
+        if reply.startswith("[WhatsBot-Lite]"):
             contact = agent_handler._get_contact(phone)
             contact.add_message("system_notice", reply)
             await ws_manager.broadcast("new_message", {

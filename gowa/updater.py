@@ -43,7 +43,7 @@ GOWA_RELEASE_DOWNLOAD = (
 )
 GOWA_RELEASE_PAGE = f"https://github.com/{GOWA_GH_REPO}/releases/tag/v{{version}}"
 
-# Versions the WhatsBot client is known to talk to. Anything outside this range
+# Versions the WhatsBot-Lite client is known to talk to. Anything outside this range
 # is still offered, but flagged as "não homologada": it needs an explicit
 # confirmation and never triggers the proactive modal.
 GOWA_SUPPORTED_RANGE = ">=8.8.0,<10.0.0"

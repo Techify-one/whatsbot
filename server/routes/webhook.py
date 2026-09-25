@@ -869,7 +869,7 @@ def register_routes(app, deps):
                     })
                     if contact.ai_enabled and settings.get("auto_reply", True):
                         if not agent_handler.api_key:
-                            notice = "[WhatsBot] API key não configurada."
+                            notice = "[WhatsBot-Lite] API key não configurada."
                             contact.add_message("system_notice", notice)
                             await ws_manager.broadcast("new_message", {
                                 "phone": phone,
@@ -885,7 +885,7 @@ def register_routes(app, deps):
                                 if result.tool_calls:
                                     await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
                                 if result.reply:
-                                    if result.reply.startswith("[WhatsBot]"):
+                                    if result.reply.startswith("[WhatsBot-Lite]"):
                                         contact.add_message("system_notice", result.reply)
                                         await ws_manager.broadcast("new_message", {
                                             "phone": phone,
@@ -992,7 +992,7 @@ def register_routes(app, deps):
                     continue
 
                 if not agent_handler.api_key:
-                    notice = "[WhatsBot] API key não configurada."
+                    notice = "[WhatsBot-Lite] API key não configurada."
                     contact.add_message("system_notice", notice)
                     await ws_manager.broadcast("new_message", {
                         "phone": phone,
@@ -1024,7 +1024,7 @@ def register_routes(app, deps):
                     if result.tool_calls:
                         await _broadcast_tool_calls(phone, result.tool_calls, result.contact_info)
                     if result.reply:
-                        if result.reply.startswith("[WhatsBot]"):
+                        if result.reply.startswith("[WhatsBot-Lite]"):
                             contact.add_message("system_notice", result.reply)
                             await ws_manager.broadcast("new_message", {
                                 "phone": phone,
@@ -1116,7 +1116,7 @@ def register_routes(app, deps):
                 return ""
             return jid.split("@")[0].split(":")[0]
 
-        # ── Events GOWA emite que historicamente o WhatsBot ignorava ─────
+        # ── Events GOWA emite que historicamente o WhatsBot-Lite ignorava ─────
         # Cada um vira um plugin event com payload tipado. O bot não age
         # localmente nestes (nenhum LLM, nenhum save), só fan-outa pros plugins.
 

@@ -1,4 +1,4 @@
-"""WhatsBot — FastAPI backend with REST API, WebSocket and background tasks."""
+"""WhatsBot-Lite — FastAPI backend with REST API, WebSocket and background tasks."""
 
 import asyncio
 import dataclasses
@@ -209,7 +209,7 @@ def create_app(
 
     _docs_enabled = os.getenv("WHATSBOT_ENABLE_DOCS", "0") == "1"
     app = FastAPI(
-        title="WhatsBot",
+        title="WhatsBot-Lite",
         lifespan=lifespan,
         docs_url="/docs" if _docs_enabled else None,
         redoc_url="/redoc" if _docs_enabled else None,

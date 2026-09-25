@@ -40,9 +40,9 @@ _SAFE_HELP_CONFIG_KEYS = {
     "whatsbot_update_notifications_enabled", "whatsbot_skipped_version",
 }
 
-SYSTEM_HELP_PROMPT = """Você é a ajuda integrada do WhatsBot.
+SYSTEM_HELP_PROMPT = """Você é a ajuda integrada do WhatsBot-Lite.
 Responda em português brasileiro, com frases curtas e linguagem para uma pessoa sem conhecimento técnico.
-Seu único escopo é explicar como usar e configurar o WhatsBot. Você pode ler o sistema, mas nunca o modifica.
+Seu único escopo é explicar como usar e configurar o WhatsBot-Lite. Você pode ler o sistema, mas nunca o modifica.
 
 A BASE OFICIAL DE AJUDA abaixo já está carregada nesta mensagem. Consulte-a primeiro e responda sem usar ferramentas quando ela trouxer a orientação necessária.
 Use as ferramentas de consulta somente se a informação estiver ausente, incompleta ou parecer incompatível com a versão atual. Nesse caso, faça buscas objetivas nas referências do sistema, no código dos plugins instalados e na estrutura do banco. Nunca consulte nem exponha mensagens, contatos, chaves, senhas ou outros dados pessoais.
@@ -82,7 +82,7 @@ def system_help_prompt(panel_base_url: str = "") -> str:
     knowledge = load_system_help_knowledge().replace("{{base_url}}", base)
     return f"{SYSTEM_HELP_PROMPT.rstrip()}\n\n--- BASE OFICIAL DE AJUDA ---\n{knowledge}"
 
-PLUGIN_PROMPT = """Você é o Criador de Plugins do WhatsBot. Converse em português brasileiro com uma pessoa que não sabe programar.
+PLUGIN_PROMPT = """Você é o Criador de Plugins do WhatsBot-Lite. Converse em português brasileiro com uma pessoa que não sabe programar.
 
 Antes de usar qualquer ferramenta ou escrever código, confirme que entendeu:
 - o que o plugin deve resolver;
@@ -94,9 +94,9 @@ Antes de usar qualquer ferramenta ou escrever código, confirme que entendeu:
 Se essas informações estiverem incompletas, faça no máximo três perguntas curtas por vez. Use palavras comuns e exemplos. Coloque cada pergunta em uma linha própria, numerada, com uma linha em branco entre elas; nunca junte duas perguntas no mesmo parágrafo. Não fale de endpoints, REST, JSON, IDs, tabelas, schemas, classes ou detalhes internos. Não use ferramentas enquanto estiver esclarecendo o pedido. Quando o pedido já estiver claro, diga em uma frase o que entendeu e comece o trabalho sem pedir uma confirmação adicional. Essa frase e a primeira chamada de escrita devem ocorrer na mesma resposta do modelo; nunca encerre a rodada apenas dizendo que vai criar.
 
 O contrato completo de plugins está carregado abaixo. Ele é a primeira fonte de verdade desta execução.
-Normalmente ele basta. Consulte exemplos oficiais, outros plugins ou o código do WhatsBot somente quando
+Normalmente ele basta. Consulte exemplos oficiais, outros plugins ou o código do WhatsBot-Lite somente quando
 faltar uma informação concreta, com busca direcionada. Não faça um inventário geral do repositório.
-Em projeto novo, o WhatsBot já fornece um esqueleto descartável e marca o projeto com
+Em projeto novo, o WhatsBot-Lite já fornece um esqueleto descartável e marca o projeto com
 `.whatsbot-scaffold`. O conteúdo relevante já está aqui: o id obrigatório aparece no contexto, a versão é
 `1.0.0`, a compatibilidade é `">=1.2,<2.0"` e o restante deve refletir o pedido. Não leia nem liste o
 esqueleto. A primeira ferramenta deve ser `write_file` para sobrescrever `plugin.yaml`; continue criando os
@@ -105,14 +105,14 @@ validação reprova enquanto ele existir. Não faça uma rodada somente de racio
 falhar por argumentos ou formatação, corrija e repita; não pesquise o repositório para resolver um erro de ferramenta.
 
 Regras de implementação:
-- O plugin deve seguir o formato nativo do WhatsBot, usar SQLAlchemy e tabelas prefixadas com plugin_<id>_.
+- O plugin deve seguir o formato nativo do WhatsBot-Lite, usar SQLAlchemy e tabelas prefixadas com plugin_<id>_.
 - Preserve o id do plugin e migrations já publicadas. Atualizações adicionam migrations numeradas; nunca reescrevem migrations aplicadas.
 - Guarde uploads, imagens geradas e outros arquivos do usuário em plugins.context.plugin_data_dir('<id>'), fora da pasta substituível do código.
 - Configuração do plugin vive no próprio plugin. Não altere o painel de configurações do core.
 - Execute validações e testes aplicáveis. Ao encontrar erro, investigue e corrija autonomamente.
 - Não diga que instalou ou atualizou durante a criação. Depois da validação, informe apenas que o plugin está
-  pronto e que o WhatsBot exibirá a opção **Sim, instalar**. O usuário também pode autorizar escrevendo
-  “instale por favor” no próprio chat; nesse caso o WhatsBot executa a instalação diretamente. Nunca mande
+  pronto e que o WhatsBot-Lite exibirá a opção **Sim, instalar**. O usuário também pode autorizar escrevendo
+  “instale por favor” no próprio chat; nesse caso o WhatsBot-Lite executa a instalação diretamente. Nunca mande
   o usuário procurar esse plugin na página Plugins antes de instalá-lo.
 - Evite dependências externas quando a biblioteca padrão ou dependências do host forem suficientes.
 - Quando uma ação depender de um efeito externo, como enviar uma mensagem, só persista o novo status e a
@@ -179,7 +179,7 @@ def plugin_creator_prompt(workspace: Path | None = None) -> str:
         f"{inventory}"
     )
 
-DISCOVERY_PROMPT = """Você ajuda uma pessoa sem conhecimento técnico a explicar o plugin que deseja criar para o WhatsBot.
+DISCOVERY_PROMPT = """Você ajuda uma pessoa sem conhecimento técnico a explicar o plugin que deseja criar para o WhatsBot-Lite.
 Ainda não programe e não mencione detalhes técnicos. Entenda o pedido e faça no máximo três perguntas curtas e específicas. Pergunte apenas o que ainda falta entre: objetivo, interação com as conversas do WhatsApp, necessidade de uma tela no painel, informações que serão guardadas e um exemplo do resultado esperado.
 Comece reconhecendo o pedido em uma frase simples. Depois escreva uma frase curta explicando que precisa entender alguns detalhes.
 
@@ -193,7 +193,7 @@ Formatação obrigatória:
 Não use listas longas, entidades HTML nem explique como o sistema será implementado.
 """
 
-SUMMARY_PROMPT = """Resuma uma conversa de desenvolvimento de plugin do WhatsBot para retomada técnica.
+SUMMARY_PROMPT = """Resuma uma conversa de desenvolvimento de plugin do WhatsBot-Lite para retomada técnica.
 Preserve somente fatos confirmados: objetivo do usuário, decisões, arquivos criados ou alterados, estado da
 validação, erros relevantes e próximos passos. Não crie plugin, não use ferramentas, não dê orientação ao
 usuário e não invente. Responda em português, de forma compacta e estruturada.
@@ -206,7 +206,7 @@ def _safe_reference_path(root: Path, relative: str) -> Path:
     try:
         candidate.relative_to(root.resolve())
     except ValueError as exc:
-        raise ValueError("caminho fora das referências do WhatsBot") from exc
+        raise ValueError("caminho fora das referências do WhatsBot-Lite") from exc
     parts = set(candidate.relative_to(root.resolve()).parts)
     if parts & _BLOCKED_REFERENCE_PARTS:
         raise ValueError("essa pasta não faz parte das referências disponíveis")
@@ -365,30 +365,30 @@ def reference_functions(
     functions = [
         Function(
             name="list_whatsbot_files", description=(
-                "Lista referências do WhatsBot. No criador, use apenas para localizar um exemplo ou contrato "
+                "Lista referências do WhatsBot-Lite. No criador, use apenas para localizar um exemplo ou contrato "
                 "específico ausente no guia; não liste o repositório inteiro."
                 if plugin_creator else
-                "Lista arquivos de documentação e código do WhatsBot disponíveis para consulta."
+                "Lista arquivos de documentação e código do WhatsBot-Lite disponíveis para consulta."
             ),
             parameters={"type": "object", "properties": {"directory": {"type": "string"}, "limit": {"type": "integer"}}},
             entrypoint=list_files, skip_entrypoint_processing=True,
         ),
         Function(
             name="read_whatsbot_file", description=(
-                "Lê um trecho de exemplo, plugin instalado ou API pública do WhatsBot. Use somente quando "
+                "Lê um trecho de exemplo, plugin instalado ou API pública do WhatsBot-Lite. Use somente quando "
                 "o guia carregado não responder uma dúvida concreta."
                 if plugin_creator else
-                "Lê um trecho numerado de um arquivo do WhatsBot em modo somente leitura."
+                "Lê um trecho numerado de um arquivo do WhatsBot-Lite em modo somente leitura."
             ),
             parameters={"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}, "required": ["path"]},
             entrypoint=read_file, skip_entrypoint_processing=True,
         ),
         Function(
             name="search_whatsbot", description=(
-                "Pesquisa uma informação concreta nas referências do WhatsBot. Não repita buscas equivalentes "
+                "Pesquisa uma informação concreta nas referências do WhatsBot-Lite. Não repita buscas equivalentes "
                 "e comece a implementar assim que a lacuna estiver resolvida."
                 if plugin_creator else
-                "Pesquisa texto na documentação e no código do WhatsBot em modo somente leitura."
+                "Pesquisa texto na documentação e no código do WhatsBot-Lite em modo somente leitura."
             ),
             parameters={"type": "object", "properties": {"query": {"type": "string"}, "directory": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]},
             entrypoint=search, skip_entrypoint_processing=True,
@@ -397,7 +397,7 @@ def reference_functions(
     if include_state:
         functions.append(Function(
             name="inspect_whatsbot_state",
-            description="Consulta o estado seguro do WhatsBot para diagnóstico: configurações operacionais sem segredos, plugins registrados ou estrutura das tabelas sem registros pessoais.",
+            description="Consulta o estado seguro do WhatsBot-Lite para diagnóstico: configurações operacionais sem segredos, plugins registrados ou estrutura das tabelas sem registros pessoais.",
             parameters={
                 "type": "object",
                 "properties": {"section": {"type": "string", "enum": ["settings", "plugins", "schema"]}},
@@ -594,7 +594,7 @@ def build_agent(
         creator_default_reasoning if project_kind == "plugin" else ""
     )
     return Agent(
-        name="WhatsBot Chat",
+        name="WhatsBot-Lite Chat",
         model=build_model(api_key, model_id, effective_reasoning),
         system_message=system_message,
         tools=tools,

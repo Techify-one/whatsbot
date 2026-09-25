@@ -13,9 +13,9 @@ if /I "%1"=="--autostart" set "AUTOSTART=1"
 cd /d "%~dp0"
 
 :: Perguntar somente na primeira abertura manual. A escolha fica salva dentro
-:: de storages, que ja e a pasta de dados persistentes do WhatsBot.
+:: de storages, que ja e a pasta de dados persistentes do WhatsBot-Lite.
 :: Se ja estiver ativado, atualizar o atalho para corrigir versoes anteriores
-:: e acompanhar mudancas no caminho da pasta do WhatsBot.
+:: e acompanhar mudancas no caminho da pasta do WhatsBot-Lite.
 if "!AUTOSTART!"=="0" (
     if not exist "storages\windows_autostart_choice.txt" (
         call :ask_autostart
@@ -39,7 +39,7 @@ powershell -Command ^
 
 echo.
 echo ========================================
-echo   WhatsBot - Verificando ambiente...
+echo   WhatsBot-Lite - Verificando ambiente...
 echo ========================================
 echo.
 
@@ -153,7 +153,7 @@ if !PY_MAJOR! GEQ 4 set "VERSION_OK=1"
 if !PY_MAJOR!==3 if !PY_MINOR! GEQ 11 set "VERSION_OK=1"
 
 if !VERSION_OK!==0 (
-    echo [ERRO] Python !PY_VER! detectado, mas o WhatsBot precisa do 3.11 ou superior.
+    echo [ERRO] Python !PY_VER! detectado, mas o WhatsBot-Lite precisa do 3.11 ou superior.
     echo        Baixe a versao mais recente em: https://www.python.org/downloads/
     echo.
     if "!AUTOSTART!"=="0" pause
@@ -193,8 +193,8 @@ echo [OK] pip disponivel.
 if not exist "bin\gowa.exe" (
     echo.
     echo [ERRO] bin\gowa.exe nao encontrado!
-    echo        O download do WhatsBot esta incompleto ou corrompido.
-    echo        Baixe novamente o WhatsBot completo.
+    echo        O download do WhatsBot-Lite esta incompleto ou corrompido.
+    echo        Baixe novamente o WhatsBot-Lite completo.
     echo.
     if "!AUTOSTART!"=="0" pause
     exit /b 1
@@ -220,7 +220,7 @@ echo.
 echo [OK] Ambiente pronto!
 
 :: Quando iniciado pelo atalho oculto, rodar o servidor neste processo. Assim o
-:: WhatsBot volta no proximo logon sem abrir uma aba do navegador.
+:: WhatsBot-Lite volta no proximo logon sem abrir uma aba do navegador.
 if "!AUTOSTART!"=="1" (
     endlocal
     goto :server
@@ -232,7 +232,7 @@ endlocal
 start "" cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:8080"
 
 :: Relancar este script no modo servidor (janela oculta) e fechar este terminal
-powershell -Command "Start-Process cmd -ArgumentList '/c title WhatsBot-Server && cd /d %~dp0 && call windows_start.bat --server' -WindowStyle Hidden"
+powershell -Command "Start-Process cmd -ArgumentList '/c title WhatsBot-Lite-Server && cd /d %~dp0 && call windows_start.bat --server' -WindowStyle Hidden"
 exit
 
 :: ===== MODO SERVIDOR (janela oculta, apenas roda o uvicorn) =====
@@ -250,7 +250,7 @@ exit /b
 :ask_autostart
 echo.
 echo ========================================
-echo   Iniciar WhatsBot automaticamente?
+echo   Iniciar WhatsBot-Lite automaticamente?
 echo ========================================
 echo.
 echo [1] Sim - iniciar ao entrar no Windows
@@ -262,7 +262,7 @@ if errorlevel 2 (
     if not exist "storages" mkdir "storages"
     > "storages\windows_autostart_choice.txt" echo disabled
     echo.
-    echo [OK] O WhatsBot sera iniciado somente quando esta BAT for aberta.
+    echo [OK] O WhatsBot-Lite sera iniciado somente quando esta BAT for aberta.
     exit /b 0
 )
 
@@ -278,7 +278,7 @@ if not exist "storages" mkdir "storages"
 > "storages\windows_autostart_choice.txt" echo enabled
 echo.
 echo [OK] Inicializacao automatica ativada.
-echo      Apos desligar e ligar, o WhatsBot inicia ao entrar no Windows.
+echo      Apos desligar e ligar, o WhatsBot-Lite inicia ao entrar no Windows.
 exit /b 0
 
 :install_autostart
@@ -300,7 +300,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$shortcut.Arguments = ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command {0}{1}{0}' -f [char]34, $command); " ^
   "$shortcut.WorkingDirectory = $env:WHATSBOT_DIR; " ^
   "$shortcut.WindowStyle = 7; " ^
-  "$shortcut.Description = 'Inicia o WhatsBot em segundo plano no logon.'; " ^
+  "$shortcut.Description = 'Inicia o WhatsBot-Lite em segundo plano no logon.'; " ^
   "$shortcut.Save()"
 
 if errorlevel 1 exit /b 1

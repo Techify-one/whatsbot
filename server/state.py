@@ -1,4 +1,4 @@
-"""Shared state classes for the WhatsBot server."""
+"""Shared state classes for the WhatsBot-Lite server."""
 
 import asyncio
 import json

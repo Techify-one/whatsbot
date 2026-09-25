@@ -1,7 +1,7 @@
 """First-run setup wizard endpoints — Techify API key provisioning.
 
 The setup wizard (frontend) connects WhatsApp, then triggers
-``POST /api/setup/request-key`` which makes the WhatsBot send a WhatsApp
+``POST /api/setup/request-key`` which makes the WhatsBot-Lite send a WhatsApp
 message to the Techify provisioning number. The target — destination number
 **and** the phrase to send — is fetched at request time from Techify's
 ``/service_number`` endpoint, which is the source of truth: either field can

@@ -66,7 +66,7 @@ _PREFIX_TO_PACKAGE: dict[str, str] = {
     "magic": "python-magic",
 }
 
-# Core WhatsBot top-level packages a plugin may import absolutely (never deps).
+# Core WhatsBot-Lite top-level packages a plugin may import absolutely (never deps).
 _CORE_PACKAGES = {
     "server", "agent", "config", "gowa", "db", "plugins", "main",
     "whatsbot_plugins", "tests",
@@ -74,7 +74,7 @@ _CORE_PACKAGES = {
 
 # Import roots the host ALWAYS provides — a plugin may use them without
 # declaring. Anything in ``requirements.txt`` (and its transitive closure) is
-# installed in every WhatsBot environment, so it is computed dynamically at
+# installed in every WhatsBot-Lite environment, so it is computed dynamically at
 # runtime. This curated baseline is the fallback for contexts where the host's
 # package metadata isn't importable (e.g. the plugin store's CI), and covers the
 # requirements.txt roots + their most-used transitive deps (notably ``pydantic``
@@ -198,7 +198,7 @@ def _local_module_names(plugin_dir: Path) -> set[str]:
 
 def third_party_roots(plugin_dir: Path) -> dict[str, set[str]]:
     """:func:`scan_imports` reduced to genuine third-party roots — excludes the
-    stdlib, core WhatsBot packages and the plugin's own modules.
+    stdlib, core WhatsBot-Lite packages and the plugin's own modules.
     """
     stdlib = set(sys.stdlib_module_names)
     local = _local_module_names(plugin_dir)

@@ -1,4 +1,4 @@
-"""Authentication utilities for WhatsBot web panel."""
+"""Authentication utilities for WhatsBot-Lite web panel."""
 
 import hashlib
 import hmac

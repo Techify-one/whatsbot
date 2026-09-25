@@ -1,5 +1,5 @@
 #!/bin/bash
-# WhatsBot — macOS native launcher (hot-reload).
+# WhatsBot-Lite — macOS native launcher (hot-reload).
 #
 # Equivalente do ``windows_start.bat`` para usuários de macOS: configura o
 # ambiente sozinho (instala Python se faltar, baixa o binário GOWA, cria a
@@ -28,7 +28,7 @@ cd "$SCRIPT_DIR" || exit 1
 
 echo ""
 echo "========================================"
-echo "  WhatsBot - Verificando ambiente..."
+echo "  WhatsBot-Lite - Verificando ambiente..."
 echo "========================================"
 echo ""
 
@@ -221,7 +221,7 @@ mkdir -p storages/plugins
 # ===== 6. SUBIR O SERVIDOR (hot-reload) =====
 echo ""
 echo "========================================"
-echo "  WhatsBot rodando em http://127.0.0.1:${WEB_PORT}"
+echo "  WhatsBot-Lite rodando em http://127.0.0.1:${WEB_PORT}"
 echo "  Feche esta janela ou rode macos_stop.command para parar."
 echo "========================================"
 echo ""

@@ -4,7 +4,7 @@ Materialises ``ai_tools.code`` to ``storages/ai_tools/<name>.py``, resolves the
 declared dependencies (check-before-install, so pip only touches the network the
 first time a spec set changes), imports the module under the namespaced package
 ``whatsbot_ai_tools.<name>`` (mirroring ``whatsbot_plugins.<id>``), validates the
-WhatsBot tool contract (``schema dict + execute(ctx, args)``) and registers it in
+WhatsBot-Lite tool contract (``schema dict + execute(ctx, args)``) and registers it in
 the handler's tool registry.
 
 Fail-closed: any problem (bad name, dep install failure, import error, contract

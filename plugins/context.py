@@ -66,7 +66,7 @@ def send_whatsapp_message(
     mentions: list[str] | None = None,
     reply_message_id: str | None = None,
 ) -> dict:
-    """Send a text through the active WhatsBot/GOWA connection.
+    """Send a text through the active WhatsBot-Lite/GOWA connection.
 
     This is the supported outbound API for plugin tools, event handlers and
     routes. Async callers should invoke it with ``asyncio.to_thread`` because

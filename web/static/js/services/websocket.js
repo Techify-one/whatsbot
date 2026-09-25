@@ -1,5 +1,5 @@
 /**
- * WebSocket client with auto-reconnect for WhatsBot real-time events.
+ * WebSocket client with auto-reconnect for WhatsBot-Lite real-time events.
  */
 
 export function createWebSocket(handlers) {

@@ -1,4 +1,4 @@
-"""WhatsBot — self-update endpoint (uses GitHub Releases API for versioning)."""
+"""WhatsBot-Lite — self-update endpoint (uses GitHub Releases API for versioning)."""
 
 import asyncio
 import json
@@ -312,6 +312,6 @@ def register_routes(app, deps):
             logger.exception("Unexpected error during update")
             return _err(f"Erro inesperado: {exc}", 500)
         result["restarting"] = True
-        result["message"] += " O WhatsBot será reiniciado automaticamente para aplicar a atualização."
-        schedule_restart(reason=f"WhatsBot updated to v{result['version']}")
+        result["message"] += " O WhatsBot-Lite será reiniciado automaticamente para aplicar a atualização."
+        schedule_restart(reason=f"WhatsBot-Lite updated to v{result['version']}")
         return _ok(result)

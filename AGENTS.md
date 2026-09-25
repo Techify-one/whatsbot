@@ -1,4 +1,4 @@
-# WhatsBot
+# WhatsBot-Lite
 
 Bot de WhatsApp com IA para usuários finais, distribuído como EXE Windows.
 
@@ -67,14 +67,14 @@ gowa/proxy.py        → proxy de saída da conexão do WhatsApp (validação, U
 server/routes/gowa_update.py → endpoints /api/gowa/* (versão, check, update, rollback, skip, proxy)
 bin/gowa.exe         → binário GOWA pré-compilado do Windows (não editar; atualizações vão pra storages/bin/)
 storages/bin/        → binário GOWA atualizado pelo painel (writable, persiste em Docker/Coolify)
-WHATSBOT_VERSION     → versão + histórico de changelog do WhatsBot que acompanha esta release (fonte única, bumpado pelo /release-up)
-server/routes/update.py → detecção, preferências e instalação de updates do WhatsBot
+WHATSBOT_VERSION     → versão + histórico de changelog do WhatsBot-Lite que acompanha esta release (fonte única, bumpado pelo /release-up)
+server/routes/update.py → detecção, preferências e instalação de updates do WhatsBot-Lite
 ```
 
 ## Base obrigatória do Chat de ajuda
 
 O arquivo [agent/SYSTEM_HELP.md](agent/SYSTEM_HELP.md) é a fonte oficial, em linguagem de usuário final,
-para o projeto **WhatsBot — Ajuda do sistema**. Ele é lido novamente ao construir o agente de cada
+para o projeto **WhatsBot-Lite — Ajuda do sistema**. Ele é lido novamente ao construir o agente de cada
 mensagem de ajuda, recebe o domínio atual no lugar de `{{base_url}}` e fica no contexto antes de qualquer
 consulta por ferramenta. A criação de plugins usa outro prompt e não recebe essa base.
 
@@ -231,13 +231,13 @@ Info é salva automaticamente via tool calling do LLM e injetada no system promp
 
 ## Provider de LLM e onboarding (Techify)
 
-O WhatsBot usa o **proxy LLM da Techify** (`https://llm.techify.one/api/v1`) como provider — API compatível com OpenRouter/OpenAI, então o cliente OpenAI (`base_url=LLM_API_BASE_URL`) e os endpoints `/models` e `/credits` funcionam sem mudança. As constantes vivem em [config/settings.py](config/settings.py) (`LLM_API_BASE_URL`, `TECHIFY_SERVICE_NUMBER_URL`, `TECHIFY_PROVISION_NUMBER`, `TECHIFY_REQUEST_APIKEY_URL`, `TECHIFY_PROVISION_MESSAGE`), todas com override por env.
+O WhatsBot-Lite usa o **proxy LLM da Techify** (`https://llm.techify.one/api/v1`) como provider — API compatível com OpenRouter/OpenAI, então o cliente OpenAI (`base_url=LLM_API_BASE_URL`) e os endpoints `/models` e `/credits` funcionam sem mudança. As constantes vivem em [config/settings.py](config/settings.py) (`LLM_API_BASE_URL`, `TECHIFY_SERVICE_NUMBER_URL`, `TECHIFY_PROVISION_NUMBER`, `TECHIFY_REQUEST_APIKEY_URL`, `TECHIFY_PROVISION_MESSAGE`), todas com override por env.
 
 **Destino do provisionamento = número + frase, resolvidos CAMPO A CAMPO** ([server/routes/setup.py](server/routes/setup.py) `fetch_provision_target`): `/service_number` (fonte da verdade — rotacionar qualquer um dos dois é editar a resposta dele, servida pela Cloudflare, sem release nem env em cliente nenhum) → env (`TECHIFY_PROVISION_NUMBER` / `TECHIFY_PROVISION_MESSAGE`) → **literal em [config/settings.py](config/settings.py)**, que é a última rede para o endpoint fora do ar → os seams `filter.provisioning.number` / `.message`, que têm a última palavra. ⚠️ Os dois campos são independentes: uma resposta que ainda não traga `message` continua ditando o `phone`, e a frase cai no fallback. ⚠️ A frase é o **gatilho** que o destino reconhece, então trocar o número sem trocar a frase junto entrega um texto que o outro lado ignora **em silêncio** — é por isso que os dois seams existem em par. `None`/`""` em qualquer um dos dois **aborta**: o wizard responde com erro acionável (HTTP 400) e **nada** é enviado — sem materializar o contato e sem armar o polling da chave.
 
 **Wizard de 1ª execução** ([web/static/js/components/SetupWizard.js](web/static/js/components/SetupWizard.js), rota `/wizard`): em 3 passos —
 1. **Conectar WhatsApp** (QR; auto-avança ao conectar).
-2. **Provisionar chave de API**: o WhatsBot consulta `/service_number` da Techify — que devolve `{ok, phone, message}` e é a **fonte da verdade do par destino+frase** —, manda essa mensagem ao número retornado pedindo a conta+chave (`POST /api/setup/request-key`), faz polling até a chave chegar (com TTL) e já credita ~US$1. O contato do número de provisionamento tem a IA desativada automaticamente.
+2. **Provisionar chave de API**: o WhatsBot-Lite consulta `/service_number` da Techify — que devolve `{ok, phone, message}` e é a **fonte da verdade do par destino+frase** —, manda essa mensagem ao número retornado pedindo a conta+chave (`POST /api/setup/request-key`), faz polling até a chave chegar (com TTL) e já credita ~US$1. O contato do número de provisionamento tem a IA desativada automaticamente.
 3. **Prompt do agente**: o usuário escreve a personalidade da IA. Pode pular o wizard e ir direto pro chat.
 
 O wizard só aparece em instalações ainda não configuradas. A chave é persistida em `config["openrouter_api_key"]` (nome legado).
@@ -251,7 +251,7 @@ O loop de raciocínio + tool calling roda no **AGNO** ([agent/agno_engine.py](ag
 Pontos-chave da integração:
 
 - **Stateless por requisição**: um `Agent` novo é montado por mensagem, para os closures de tool capturarem o coletor `executed` daquela request sem cross-talk entre contatos concorrentes.
-- **WhatsBot é dono do contexto**: o engine NÃO recebe `db` nem deixa o AGNO montar contexto próprio (`build_context=False`, `add_history_to_context=False`, etc.). O system prompt (já filtrado) vira `system_message`; o histórico (já filtrado) é convertido em `agno.models.message.Message` e passado como `input`.
+- **WhatsBot-Lite é dono do contexto**: o engine NÃO recebe `db` nem deixa o AGNO montar contexto próprio (`build_context=False`, `add_history_to_context=False`, etc.). O system prompt (já filtrado) vira `system_message`; o histórico (já filtrado) é convertido em `agno.models.message.Message` e passado como `input`.
 - **Tools**: cada schema OpenAI registrado é embrulhado num `agno.tools.function.Function` (`skip_entrypoint_processing=True`) cujo entrypoint reaplica `filter.tool.args`/`filter.tool.result` e emite `tool.before`/`tool.after` — mesma semântica do dispatch antigo. Async path usa entrypoint assíncrono; sync path usa síncrono.
 - **Usage**: lido de `run_output.metrics` (`RunMetrics.input_tokens/output_tokens`) e gravado via `AgentHandler._record_usage_tokens` (em vez de `response.usage`).
 - **Reply**: `_extract_reply` pega a ÚLTIMA mensagem `assistant` sem tool calls de `run_output.messages` (fallback: `run_output.content`). Isso evita que o AGNO concatene um "chatter" pré-tool com a resposta final — crítico com `split_messages` (saída JSON array) ligado.
@@ -259,10 +259,10 @@ Pontos-chave da integração:
 
 O motor roda **sempre um `Agent` único**. A base extensível para configurar agentes via banco (prompt/modelo/tools lidos do DB) é a infra `ai_agents` + [agent/agent_factory.py](agent/agent_factory.py), ligada por `ai_engine_enabled` — também single-agent.
 
-## Atualização do WhatsBot (self-update)
+## Atualização do WhatsBot-Lite (self-update)
 
 Diferente da atualização do GOWA (binário, com verificação de SHA-256 e rollback automático — ver
-próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](server/routes/update.py))
+próxima seção), o self-update do WhatsBot-Lite em si ([server/routes/update.py](server/routes/update.py))
 é mais simples: sobrescreve os arquivos de código com o conteúdo da última release do GitHub.
 
 - **Versão local**: lida de `WHATSBOT_VERSION` na raiz (JSON `{"version", "changelog": [{"version",
@@ -286,7 +286,7 @@ próxima seção), o self-update do WhatsBot em si ([server/routes/update.py](se
   changelog e oferece três escolhas: **Atualizar agora**, **Agora não** e **Nunca avisar**. “Agora não”
   grava a versão em `whatsbot_skipped_version`; uma release com outro número volta a aparecer. “Nunca
   avisar” desliga `whatsbot_update_notifications_enabled`, que pode ser reativado em Painel → Sistema →
-  Atualizar WhatsBot (`/painel?aba=sistema#update`). Essas preferências ficam no banco da instalação,
+  Atualizar WhatsBot-Lite (`/painel?aba=sistema#update`). Essas preferências ficam no banco da instalação,
   não no navegador.
 - **Compatibilidade com versões antigas**: `GET /api/update/local-version` e
   `POST /api/update/popup-seen` continuam disponíveis para frontend em cache. O marcador legado
@@ -315,7 +315,7 @@ no topo do `/painel`.
 | Diretório | Papel | Por quê |
 |---|---|---|
 | `bin/<nome>` | **bundled**: o que a imagem, o launcher ou o repo entregou | No Docker é symlink pra camada da imagem (some no redeploy); no Windows `bin/gowa.exe` é tracked no git (escrever ali sujaria a árvore e conflitaria no `git pull`) |
-| `storages/bin/<nome>` | **managed**: instalado pelo painel | `storages/` é gitignored, é volume nomeado no Docker e é preservado pelo self-update do WhatsBot |
+| `storages/bin/<nome>` | **managed**: instalado pelo painel | `storages/` é gitignored, é volume nomeado no Docker e é preservado pelo self-update do WhatsBot-Lite |
 
 `gowa/binary.py:resolve_binary()` escolhe entre os dois **comparando versões**, não preferindo cegamente
 o gerenciado: uma imagem reconstruída com GOWA mais novo ganha de um override velho em `storages/bin`.
@@ -336,7 +336,7 @@ sincronia.
 ### Faixa homologada
 
 `GOWA_SUPPORTED_RANGE` em [gowa/updater.py](gowa/updater.py) (hoje `>=8.8.0,<10.0.0`) define o que o
-WhatsBot foi testado para falar. Versão fora da faixa continua aparecendo, mas marcada como **não
+WhatsBot-Lite foi testado para falar. Versão fora da faixa continua aparecendo, mas marcada como **não
 homologada**: exige confirmação em dois cliques e **nunca** dispara o modal proativo na tela principal.
 Ao homologar uma versão maior, bumpe a constante junto com o `GOWA_VERSION`.
 
@@ -462,7 +462,7 @@ desconectar. Nunca volte a cancelar o agente por `request.is_disconnected()`. A 
 `_active_conversation_runs`; `GET .../activity` permite que uma conversa reaberta recupere mensagens e
 estado por polling. Fechar/trocar a tela deve abortar somente o `fetch` do frontend. Cancelamento explícito
 pelo botão continua usando `POST /api/chat/runs/{run_id}/cancel`. Esse estado ativo é por processo: um
-reinício do WhatsBot encerra tarefas em curso, mas fechar o navegador não.
+reinício do WhatsBot-Lite encerra tarefas em curso, mas fechar o navegador não.
 
 ## Fotos de perfil (avatars)
 
@@ -479,7 +479,7 @@ Nomes não vêm do GOWA (`DisplayName` volta vazio): são resolvidos de contatos
 
 **Remetente clicável**: no `ContactDetail`, o nome do remetente numa mensagem de grupo vira `<button>` quando casa por nome exato com um membro do roster (`members`) cujo `phone` começa com `55` — o fluxo de iniciar conversa prefixa `55` a qualquer número, então DDI estrangeiro seria corrompido; esses ficam texto. O clique chama `onOpenParticipant` → `Contacts.handleOpenParticipant`: `GET /api/contacts/lookup`; contato existente abre direto, inexistente (ou erro no lookup) passa pelo `StartChatWarningModal` (o aviso de banimento não pode ser contornado). Sem `onOpenParticipant` (sandbox) o rótulo segue texto.
 
-## API REST do WhatsBot (backend FastAPI)
+## API REST do WhatsBot-Lite (backend FastAPI)
 
 | Método | Endpoint | Descrição |
 |--------|----------|-----------|
@@ -656,7 +656,7 @@ Plugin declara `class Settings(BaseModel)` em `settings.py`. O endpoint `GET /ap
 
 ### Onde fica a configuração de um plugin (REGRA)
 
-**Toda configuração de um plugin vive na aba de configuração DO PRÓPRIO plugin** — o botão **Configurar** no card em *Gerenciar Plugins* (`/plugins`). **Nunca** adicione uma seção/aba nova ao painel de Configurações padrão do WhatsBot ([web/static/js/components/ConfigPanel.js](web/static/js/components/ConfigPanel.js)) para algo que pertence a um plugin. O core não deve crescer com opções de plugin.
+**Toda configuração de um plugin vive na aba de configuração DO PRÓPRIO plugin** — o botão **Configurar** no card em *Gerenciar Plugins* (`/plugins`). **Nunca** adicione uma seção/aba nova ao painel de Configurações padrão do WhatsBot-Lite ([web/static/js/components/ConfigPanel.js](web/static/js/components/ConfigPanel.js)) para algo que pertence a um plugin. O core não deve crescer com opções de plugin.
 
 Há dois jeitos (escolha um, ou combine) de preencher o modal "Configurar":
 
@@ -693,7 +693,7 @@ a tela de um plugin específico.
 
 ### Events e Filters (bus do plugin)
 
-Plugins podem reagir a tudo que acontece no WhatsBot e modificar dados em trânsito sem editar o core. Dois mecanismos complementares (padrão WordPress: actions + filters; referências validadas em Baileys / WAHA / Home Assistant):
+Plugins podem reagir a tudo que acontece no WhatsBot-Lite e modificar dados em trânsito sem editar o core. Dois mecanismos complementares (padrão WordPress: actions + filters; referências validadas em Baileys / WAHA / Home Assistant):
 
 - **Events** — broadcast fire-and-forget, paralelo. Plugin exporta `EVENT_HANDLERS` em `<plugin>/events.py` e declara `entry.events: events` no manifest. Não bloqueia o pipeline principal; exceção em um handler nunca afeta outros.
 - **Filters** — interceptive, síncrono no pipeline. Plugin exporta `FILTERS` em `<plugin>/filters.py` e declara `entry.filters: filters` no manifest. Recebe `(ctx, value)` e retorna valor modificado ou `None` pra abortar a ação envolvida. Exceção em um filter é isolada (loga + valor passa intacto ao próximo).
@@ -784,7 +784,7 @@ FILTERS = {
 }
 ```
 
-`ctx` expõe `handler` (AgentHandler), `plugin_id`, `plugin_db`, `event_name`/`filter_name`, `emitted_at`. Sync vai pra `asyncio.to_thread`; async é `await`-ado direto. Filter pode ser sync ou async — em paths sync (process_message) o WhatsBot usa `apply_filter_sync` que delega ao loop com `run_coroutine_threadsafe`.
+`ctx` expõe `handler` (AgentHandler), `plugin_id`, `plugin_db`, `event_name`/`filter_name`, `emitted_at`. Sync vai pra `asyncio.to_thread`; async é `await`-ado direto. Filter pode ser sync ou async — em paths sync (process_message) o WhatsBot-Lite usa `apply_filter_sync` que delega ao loop com `run_coroutine_threadsafe`.
 
 **Padrões de uso comuns**:
 

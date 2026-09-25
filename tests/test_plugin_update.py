@@ -276,7 +276,7 @@ def test_whatsbot_self_update_schedules_restart():
         assert response["ok"] is True
         assert response["data"]["restarting"] is True
         assert "reiniciado automaticamente" in response["data"]["message"]
-        assert restart_reasons == ["WhatsBot updated to v9.9.9"]
+        assert restart_reasons == ["WhatsBot-Lite updated to v9.9.9"]
     finally:
         update_routes._fetch_latest_release = original_fetch
         update_routes._perform_update = original_perform

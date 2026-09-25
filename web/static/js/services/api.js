@@ -1,5 +1,5 @@
 /**
- * REST API client for WhatsBot backend.
+ * REST API client for WhatsBot-Lite backend.
  */
 
 const BASE = '';

@@ -3,7 +3,7 @@ name: Lembretes
 version: 1.0.0
 whatsbot_api_version: ">=1.0,<2.0"
 description: Anota lembretes pedidos pelo contato (ex "me lembre de comprar pão") e mostra na tela com atualização em tempo real via WebSocket.
-author: WhatsBot
+author: WhatsBot-Lite
 entry:
   tools: tools
   routes: routes

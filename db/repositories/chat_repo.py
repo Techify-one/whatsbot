@@ -49,8 +49,13 @@ def ensure_system_project() -> dict:
             )
         ).mappings().first()
     if row:
-        return dict(row)
-    return create_project("WhatsBot", "system", None, "")
+        project = dict(row)
+        # Installs created before the rename still carry the old product name.
+        if project["name"] == "WhatsBot":
+            update_project(project["id"], name="WhatsBot-Lite")
+            project["name"] = "WhatsBot-Lite"
+        return project
+    return create_project("WhatsBot-Lite", "system", None, "")
 
 
 def create_project(name: str, kind: str, plugin_id: str | None, workspace_path: str) -> dict:

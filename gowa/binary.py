@@ -9,7 +9,7 @@ The GOWA binary can live in two places:
   working tree and conflict on ``git pull``).
 * ``storages/bin/<name>``: the **managed** override, installed by the panel.
   ``storages/`` is gitignored, is a named volume in Docker and is preserved by
-  the WhatsBot self-updater, so it is the only writable location that survives
+  the WhatsBot-Lite self-updater, so it is the only writable location that survives
   in all four environments.
 
 ``resolve_binary()`` compares versions instead of blindly preferring the

@@ -1,4 +1,4 @@
-"""WhatsBot — WhatsApp AI Bot with Web GUI."""
+"""WhatsBot-Lite — WhatsApp AI Bot with Web GUI."""
 
 import logging
 import os
@@ -43,7 +43,7 @@ def main():
         ],
     )
     logger = logging.getLogger("whatsbot")
-    logger.info("WhatsBot starting...")
+    logger.info("WhatsBot-Lite starting...")
 
     from gowa.manager import GOWAManager
     from gowa.client import GOWAClient
@@ -88,7 +88,7 @@ def main():
     import uvicorn
     logger.info("Starting web server on http://%s:%d", host, web_port)
     uvicorn.run(app, host=host, port=web_port, log_level="warning")
-    logger.info("WhatsBot exiting.")
+    logger.info("WhatsBot-Lite exiting.")
 
 
 if __name__ == "__main__":

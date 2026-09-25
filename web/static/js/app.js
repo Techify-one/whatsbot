@@ -390,15 +390,15 @@ function App({ onLogout, hasPassword }) {
     try {
       const res = await performUpdate();
       if (!res || !res.ok) {
-        setWhatsbotUpdateError((res && res.error) || 'Não foi possível atualizar o WhatsBot.');
+        setWhatsbotUpdateError((res && res.error) || 'Não foi possível atualizar o WhatsBot-Lite.');
         setWhatsbotUpdating(false);
         return;
       }
-      setNotification(res.data?.message || 'Atualização instalada. Reiniciando o WhatsBot...');
+      setNotification(res.data?.message || 'Atualização instalada. Reiniciando o WhatsBot-Lite...');
       // Keep the modal locked while the server restarts. The WebSocket
       // reconnect runs checkWhatsBotUpdate again and closes it.
     } catch (_) {
-      setWhatsbotUpdateError('Erro de conexão ao atualizar o WhatsBot.');
+      setWhatsbotUpdateError('Erro de conexão ao atualizar o WhatsBot-Lite.');
       setWhatsbotUpdating(false);
     }
   }
@@ -547,7 +547,7 @@ function App({ onLogout, hasPassword }) {
     try { await skipGowaVersion(version); } catch { /* ignore */ }
   }, []);
 
-  // ── Browser-tab unread badge ("(3) WhatsBot"), like WhatsApp Web ──────────
+  // ── Browser-tab unread badge ("(3) WhatsBot-Lite"), like WhatsApp Web ──────────
   // Single source of truth is the backend count; we refresh it (debounced) on
   // boot, on WS events that change unread state, and when the contacts list
   // reports a change (e.g. the operator opened/read a chat — no WS event fires
@@ -577,7 +577,7 @@ function App({ onLogout, hasPassword }) {
   // Tab-title badge — gated by the "tab notification" preference.
   useEffect(() => {
     const tabBadge = getNotifPref('tab');
-    document.title = (tabBadge && unreadConvos > 0) ? `(${unreadConvos}) WhatsBot` : 'WhatsBot';
+    document.title = (tabBadge && unreadConvos > 0) ? `(${unreadConvos}) WhatsBot-Lite` : 'WhatsBot-Lite';
   }, [unreadConvos, notifVersion]);
 
   // Browser notification + sound on a new INBOUND message (from a contact).
@@ -594,7 +594,7 @@ function App({ onLogout, hasPassword }) {
       if (!preview) {
         preview = m.media_type ? 'Enviou uma mídia' : 'Nova mensagem';
       }
-      showBrowserNotification('WhatsBot — nova mensagem', preview.slice(0, 140));
+      showBrowserNotification('WhatsBot-Lite — nova mensagem', preview.slice(0, 140));
     }
   }, [newMessage]);
 

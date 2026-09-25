@@ -1,4 +1,4 @@
-"""Pure helper functions for the WhatsBot server."""
+"""Pure helper functions for the WhatsBot-Lite server."""
 
 import json
 from pathlib import Path

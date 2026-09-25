@@ -1,4 +1,4 @@
-﻿# WhatsBot 
+﻿# WhatsBot-Lite 
 
 **Inteligência artificial no seu WhatsApp em menos de 5 minutos. Sem mensalidade. Sem complicação.**
 
@@ -8,18 +8,18 @@ Baixou, instalou, escaneou o QR Code, escreveu como a IA deve se comportar e pro
 
 100% gratuito, código aberto, tudo roda no seu computador.
 
-**Tutorial completo no blog da Techify:** [WhatsBot: Chatbot WhatsApp com IA grátis em 2026](https://techify.one/blog/whatsbot-chatbot-whatsapp-com-ia-gratis-em-2026)
+**Tutorial completo no blog da Techify:** [WhatsBot-Lite: Chatbot WhatsApp com IA grátis em 2026](https://techify.one/blog/whatsbot-chatbot-whatsapp-com-ia-gratis-em-2026)
 
 ---
 
-## Para quem é o WhatsBot?
+## Para quem é o WhatsBot-Lite?
 
 - Donos de loja que querem responder clientes automaticamente
 - Profissionais liberais (dentistas, advogados, contadores) que precisam de uma secretária virtual
 - Prestadores de serviço que recebem muitas mensagens e não conseguem responder a tempo
 - Qualquer pessoa que queira uma IA atendendo no WhatsApp sem pagar mensalidade de plataforma
 
-**Você não precisa saber programar.** O WhatsBot foi feito para ser simples de usar. E se um dia quiser personalizar algo no código, basta pedir para qualquer ferramenta de IA (como ChatGPT, Claude, Cursor, etc.) fazer a alteração — o código é aberto e as mudanças funcionam na hora, sem processo complicado.
+**Você não precisa saber programar.** O WhatsBot-Lite foi feito para ser simples de usar. E se um dia quiser personalizar algo no código, basta pedir para qualquer ferramenta de IA (como ChatGPT, Claude, Cursor, etc.) fazer a alteração — o código é aberto e as mudanças funcionam na hora, sem processo complicado.
 
 ---
 
@@ -27,16 +27,16 @@ Baixou, instalou, escaneou o QR Code, escreveu como a IA deve se comportar e pro
 
 ### 1. Baixe e abra o programa
 
-Baixe o WhatsBot, extraia a pasta e dê dois cliques no arquivo **start.bat**. O programa vai preparar tudo sozinho e abrir automaticamente no seu navegador.
+Baixe o WhatsBot-Lite, extraia a pasta e dê dois cliques no arquivo **start.bat**. O programa vai preparar tudo sozinho e abrir automaticamente no seu navegador.
 
-> **Por que um .bat e não um .exe?** Porque assim você (ou qualquer ferramenta de IA) pode abrir, ler e modificar o código livremente. Com um .exe isso não seria possível. O WhatsBot foi pensado para ser fácil de personalizar.
+> **Por que um .bat e não um .exe?** Porque assim você (ou qualquer ferramenta de IA) pode abrir, ler e modificar o código livremente. Com um .exe isso não seria possível. O WhatsBot-Lite foi pensado para ser fácil de personalizar.
 
 ### 2. Siga o assistente de configuração
 
 Na primeira vez, abre um assistente que cuida de tudo em poucos passos:
 
 - **Conecte seu WhatsApp** escaneando o QR Code (igual ao WhatsApp Web)
-- **Sua chave de API é criada automaticamente** — o WhatsBot conversa com a Techify pelo seu WhatsApp, cria sua conta e já libera um crédito grátis para você começar a testar. Você não precisa criar conta em nenhum site nem copiar e colar chave nenhuma.
+- **Sua chave de API é criada automaticamente** — o WhatsBot-Lite conversa com a Techify pelo seu WhatsApp, cria sua conta e já libera um crédito grátis para você começar a testar. Você não precisa criar conta em nenhum site nem copiar e colar chave nenhuma.
 - Quando o crédito estiver acabando, o próprio painel avisa e mostra o link para recarregar. Você só paga pelo que usar — sem mensalidade.
 
 > Quer pular o assistente e configurar manualmente? Dá para fechar o wizard e ir direto para o chat — a chave e os modelos ficam disponíveis na tela de Configurações.
@@ -84,7 +84,7 @@ Uma tela parecida com o WhatsApp Web onde você acompanha tudo o que está acont
 - **Apagar mensagem** — apague uma mensagem que você enviou (para todos)
 - **Fixar conversas** — fixe os contatos mais importantes no topo da lista
 - **Marcar como lida / não lida** — controle manualmente o que já viu, ou marque todas de uma vez
-- **Menções em grupos** — escreva `@nome` ou `@todos` e o WhatsBot transforma na menção real; menções que chegam aparecem com o nome do contato em vez do número, e o grupo é destacado quando mencionam você
+- **Menções em grupos** — escreva `@nome` ou `@todos` e o WhatsBot-Lite transforma na menção real; menções que chegam aparecem com o nome do contato em vez do número, e o grupo é destacado quando mencionam você
 - **Indicador de digitação** — veja quando o contato está digitando ou gravando áudio em tempo real
 - **Mensagens não lidas** — contador verde mostra quantas mensagens do cliente você ainda não viu, e contador azul mostra quantas respostas a IA enviou que você ainda não conferiu. Ao abrir a conversa, ambos zeram e o WhatsApp marca as mensagens como lidas (✓✓ azul) automaticamente
 - **Reenviar mensagens com erro** — se uma mensagem falhar, você pode tentar enviar de novo com um clique
@@ -108,7 +108,7 @@ A IA lembra de quem está falando e coleta informações automaticamente:
 ### Configurações
 
 O painel separa as opções em **Agente**, **Modelos e mídia** e **Sistema**. Cada aba e cada configuração
-tem um link direto, então a ajuda do WhatsBot consegue levar você exatamente ao lugar certo.
+tem um link direto, então a ajuda do WhatsBot-Lite consegue levar você exatamente ao lugar certo.
 
 Personalize tudo do jeito que você quiser:
 
@@ -163,7 +163,7 @@ Teste a IA antes de colocar para funcionar:
 
 ### Chat e Criador de Plugins
 
-Abra a engrenagem e escolha **Chat** para conversar com o assistente técnico do próprio WhatsBot:
+Abra a engrenagem e escolha **Chat** para conversar com o assistente técnico do próprio WhatsBot-Lite:
 
 - **Tire dúvidas do sistema** — pergunte onde fica uma configuração ou como mudar um comportamento; o assistente consulta o código e a documentação atuais antes de orientar
 - **Crie plugins conversando** — cada plugin ganha um projeto com pasta, arquivos e várias conversas persistentes; a referência completa de criação já entra no contexto, sem uma longa pesquisa pelo sistema
@@ -176,7 +176,7 @@ Abra a engrenagem e escolha **Chat** para conversar com o assistente técnico do
 - **Instale com confirmação** — depois da validação, a oferta de instalação permanece na conversa; clique em **Sim, instalar** ou escreva “instale por favor” para instalar ou atualizar diretamente, mantendo backup para recuperação
 - **Controle o contexto** — a compactação é automática em conversas longas e também pode ser acionada com `/compact`
 
-Os projetos de desenvolvimento ficam separados da instalação ativa em `storages/plugin_creator/`. Os comandos ainda são executados com as permissões do WhatsBot na sua máquina; essa separação evita alterações acidentais no plugin ativo, mas não é uma sandbox de segurança.
+Os projetos de desenvolvimento ficam separados da instalação ativa em `storages/plugin_creator/`. Os comandos ainda são executados com as permissões do WhatsBot-Lite na sua máquina; essa separação evita alterações acidentais no plugin ativo, mas não é uma sandbox de segurança.
 
 ---
 
@@ -190,7 +190,7 @@ Quem quiser ir além do básico pode adicionar funcionalidades extras sem mexer 
 - **Telas próprias no painel** — adicione abas customizadas na interface
 - **Configurações próprias** — cada plugin pode ter sua tela de configurações
 
-Plugins ficam isolados na pasta `storages/plugins/` e podem ser instalados, ativados, desativados, exportados (`.zip`) ou removidos diretamente pela interface, sem afetar o resto do programa. Atualizar o WhatsBot **não** mexe nos seus plugins.
+Plugins ficam isolados na pasta `storages/plugins/` e podem ser instalados, ativados, desativados, exportados (`.zip`) ou removidos diretamente pela interface, sem afetar o resto do programa. Atualizar o WhatsBot-Lite **não** mexe nos seus plugins.
 
 Para criar um plugin do zero sem programar, abra **Engrenagem → Chat**, crie um projeto e descreva o que deseja. O assistente gera o código, executa os testes e oferece a instalação depois da validação.
 
@@ -215,16 +215,16 @@ Em qualquer opção, **você não precisa criar conta de IA nem copiar chave** �
 - **Conexão com internet**
 - **WhatsApp ativo no celular** — para escanear o QR Code na primeira vez
 
-Na primeira abertura de **windows_start.bat**, escolha se o WhatsBot deve iniciar
+Na primeira abertura de **windows_start.bat**, escolha se o WhatsBot-Lite deve iniciar
 automaticamente nas próximas vezes. A opção não cria um instalador nem um `.exe`:
 ela cria um atalho na pasta Inicializar do próprio usuário. Ao voltar de hibernação o processo
 costuma continuar normalmente; após desligar e ligar, ele é iniciado de novo no
 logon, em segundo plano, sem deixar a janela do CMD aberta e sem abrir o navegador.
-Para acessar o painel, abra **http://127.0.0.1:8080**; para encerrar o WhatsBot,
+Para acessar o painel, abra **http://127.0.0.1:8080**; para encerrar o WhatsBot-Lite,
 execute **windows_stop.bat**.
 
 Se você já ativou a inicialização automática em uma versão anterior, abra
-**windows_start.bat** uma vez após atualizar o WhatsBot. Isso atualiza o atalho
+**windows_start.bat** uma vez após atualizar o WhatsBot-Lite. Isso atualiza o atalho
 existente para iniciar com a janela oculta nos próximos logons. Os comandos do
 PowerShell ficam embutidos na BAT e são gravados no atalho, sem arquivo adicional.
 
@@ -242,7 +242,7 @@ PowerShell ficam embutidos na BAT e são gravados no atalho, sem arquivo adicion
 
 ## Perguntas frequentes
 
-**O WhatsBot é grátis?**
+**O WhatsBot-Lite é grátis?**
 Sim! O programa é 100% gratuito e de código aberto. O único custo é o uso da IA, cobrado por mensagem processada (geralmente centavos por conversa) — sem mensalidade. Na primeira execução você ganha um crédito grátis para testar.
 
 **Como funciona a chave de API?**
@@ -252,7 +252,7 @@ Você não precisa criar conta nem copiar chave nenhuma. Na primeira vez, o assi
 Depende do modelo escolhido e do volume de mensagens. Na prática, a maioria dos usuários gasta menos de R$ 1 por dia. Você acompanha os custos e o saldo em tempo real pelo painel.
 
 **Meus dados ficam seguros?**
-Sim. Tudo fica salvo em um banco de dados local no seu computador. O programa não tem servidor próprio — as conversas, contatos e configurações ficam apenas na pasta do WhatsBot na sua máquina.
+Sim. Tudo fica salvo em um banco de dados local no seu computador. O programa não tem servidor próprio — as conversas, contatos e configurações ficam apenas na pasta do WhatsBot-Lite na sua máquina.
 
 **Posso usar qualquer modelo de IA?**
 Sim. Há dezenas de modelos disponíveis (GPT, Gemini, Claude, Llama, e muitos outros). Você escolhe qual usar em Painel → Modelos e mídia.
@@ -273,10 +273,10 @@ O programa tenta reconectar automaticamente. Quando a internet voltar, ele retom
 Sim! No **Mac**, além do Docker, há um atalho nativo: dê dois cliques em **start.command** (sem precisar de Docker). No **Windows**, use o **start.bat**. E em qualquer sistema (Windows, Mac ou Linux) você pode rodar via **Docker**.
 
 **Quero personalizar algo no programa, como faço?**
-O WhatsBot é de código aberto e roda direto do código (sem precisar compilar). Você pode pedir para qualquer ferramenta de IA (como ChatGPT, Claude Code, Cursor, Cowork, etc.) fazer alterações — é só salvar o arquivo, fechar e abrir o iniciar.bat de novo. As mudanças já funcionam. Não precisa saber programar.
+O WhatsBot-Lite é de código aberto e roda direto do código (sem precisar compilar). Você pode pedir para qualquer ferramenta de IA (como ChatGPT, Claude Code, Cursor, Cowork, etc.) fazer alterações — é só salvar o arquivo, fechar e abrir o iniciar.bat de novo. As mudanças já funcionam. Não precisa saber programar.
 
 **Posso contribuir com o projeto?**
-Sim! O WhatsBot é um projeto de código aberto. Contribuições são bem-vindas.
+Sim! O WhatsBot-Lite é um projeto de código aberto. Contribuições são bem-vindas.
 
 ---
 
